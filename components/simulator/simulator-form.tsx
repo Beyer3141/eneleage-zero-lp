@@ -2,9 +2,9 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Calculator, TrendingDown, Calendar, DollarSign, Mail, FileText, Users, CheckCircle2, AlertCircle, TrendingUp, Info, Zap, Shield, Timer } from 'lucide-react'
+import { Calculator, TrendingDown, Calendar, DollarSign, Mail, FileText, Users, CheckCircle2, AlertCircle, TrendingUp, Info, Zap, Shield, Sparkles } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Legend, Tooltip, Line, LineChart, ReferenceLine } from 'recharts'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 
 const AREA_REDUCTION_CSV_URL = 'https://docs.google.com/spreadsheets/d/1CutW05rwWNn2IDKPa7QK9q5m_A59lu1lwO1hJ-4GCHU/export?format=csv&gid=184100076'
 const POWER_PRICE_CSV_URL = 'https://docs.google.com/spreadsheets/d/1tPQZyeBHEE2Fh2nY5MBBMjUIF30YQTYxi3n2o36Ikyo/export?format=csv&gid=0'
@@ -12,7 +12,6 @@ const POWER_PRICE_CSV_URL = 'https://docs.google.com/spreadsheets/d/1tPQZyeBHEE2
 const PRODUCT_PRICE = 3500000
 const WARRANTY_YEARS = 15
 
-// 税率設定
 const TAX_RATES = {
   individual: 0,
   soloProprietor: {
@@ -29,12 +28,13 @@ const TAX_RATES = {
   corporateLarge: 0.232,
 }
 
-// 電気代上昇シナリオ
 const PRICE_SCENARIOS = {
-  noChange: { rate: 0, name: '現状維持', color: '#9ca3af', description: '電気代据え置き' },
-  standard: { rate: 0.03, name: '標準シナリオ', color: '#7CB342', description: '年3%上昇' },
-  worst: { rate: 0.05, name: '悪化シナリオ', color: '#f97316', description: '年5%上昇' },
+  noChange: { rate: 0, name: '現状維持', shortName: '0%', color: '#9ca3af', bgColor: 'bg-gray-50', borderColor: 'border-gray-200', textColor: 'text-gray-700' },
+  standard: { rate: 0.03, name: '標準シナリオ', shortName: '3%', color: '#7CB342', bgColor: 'bg-primary/5', borderColor: 'border-primary', textColor: 'text-primary' },
+  worst: { rate: 0.05, name: '悪化シナリオ', shortName: '5%', color: '#f97316', bgColor: 'bg-orange-50', borderColor: 'border-orange-500', textColor: 'text-orange-600' },
 }
+
+type ScenarioKey = keyof typeof PRICE_SCENARIOS
 
 interface AreaData {
   area: string
@@ -109,6 +109,7 @@ export function SimulatorForm() {
   const [result, setResult] = useState<SimulationResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectedScenario, setSelectedScenario] = useState<ScenarioKey>('standard')
 
   const parseCSV = (csvText: string): string[][] => {
     const lines = csvText.trim().split('\n')
@@ -247,17 +248,14 @@ export function SimulatorForm() {
       const annualSavings = totalCurrentCost - totalReducedCost
       const avgMonthlySavings = Math.round(annualSavings / 12)
 
-      // 長期予測データ（25年間）- 修正版
       const longTermData: LongTermData[] = []
       const maxYears = 25
 
       for (let year = 0; year <= maxYears; year++) {
-        // 削減前（3シナリオ）
         const costNoChange = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
         const costStandard = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
         const costWorst = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
         
-        // 削減後（3シナリオ） - 修正: 削減率は同じだが、ベースが上がるので絶対額は上がる
         const costReducedNoChange = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
         const costReducedStandard = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
         const costReducedWorst = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
@@ -273,7 +271,6 @@ export function SimulatorForm() {
         })
       }
 
-      // 投資回収計算（3シナリオ）- 修正版
       const taxRate = getTaxRate()
       const taxSavings = Math.round(PRODUCT_PRICE * taxRate)
       const actualInvestment = PRODUCT_PRICE - taxSavings
@@ -287,7 +284,6 @@ export function SimulatorForm() {
       let cumulativeReducedWorst = 0
 
       for (let year = 0; year <= maxYears; year++) {
-        // 各年の電気代（修正版）
         const yearCostNoChange = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
         const yearCostStandard = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
         const yearCostWorst = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
@@ -296,7 +292,6 @@ export function SimulatorForm() {
         const yearCostReducedStandard = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
         const yearCostReducedWorst = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
 
-        // 累積
         cumulativeNoChange += yearCostNoChange
         cumulativeStandard += yearCostStandard
         cumulativeWorst += yearCostWorst
@@ -313,7 +308,6 @@ export function SimulatorForm() {
         })
       }
 
-      // 投資回収期間を計算
       const findPaybackYear = (cumulativeSavingsKey: 'cumulativeSavingsNoChange' | 'cumulativeSavingsStandard' | 'cumulativeSavingsWorst'): number => {
         for (let i = 0; i < paybackData.length; i++) {
           if (paybackData[i][cumulativeSavingsKey] >= actualInvestment) {
@@ -364,171 +358,201 @@ export function SimulatorForm() {
     }
   }
 
+  const getScenarioData = (scenario: ScenarioKey) => {
+    if (!result) return null
+    
+    const paybackKey = scenario === 'noChange' ? result.paybackNoChange : 
+                       scenario === 'standard' ? result.paybackStandard : 
+                       result.paybackWorst
+    
+    const total20Key = scenario === 'noChange' ? result.total20YearsNoChange : 
+                       scenario === 'standard' ? result.total20YearsStandard : 
+                       result.total20YearsWorst
+    
+    return {
+      payback: paybackKey,
+      total20: total20Key,
+      withinWarranty: paybackKey <= WARRANTY_YEARS
+    }
+  }
+
   return (
     <div className="space-y-12 md:space-y-16">
       {/* 入力フォーム */}
       <motion.div 
         {...fadeInUp}
-        className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-lg shadow-gray-100/50"
+        className="bg-white border border-gray-100 rounded-3xl p-6 md:p-10 shadow-2xl shadow-gray-200/50 relative overflow-hidden"
       >
-        <div className="text-center mb-8">
-          <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-3">
-            あなたの電気代削減額を診断
-          </h2>
-          <p className="text-gray-600">
-            お住まいのエリアと月額電気代を入力してください
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid md:grid-cols-2 gap-6">
-            <div>
-              <label htmlFor="area" className="block text-sm font-semibold text-gray-900 mb-3">
-                お住まいのエリア
-              </label>
-              <select
-                id="area"
-                value={area}
-                onChange={(e) => setArea(e.target.value)}
-                className="w-full px-4 py-4 rounded-xl border-2 border-gray-200 bg-white text-gray-900 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-base"
-                required
-              >
-                <option value="">選択してください</option>
-                <option value="北海道">北海道</option>
-                <option value="東北">東北</option>
-                <option value="東京">東京</option>
-                <option value="中部">中部</option>
-                <option value="北陸">北陸</option>
-                <option value="関西">関西</option>
-                <option value="中国">中国</option>
-                <option value="四国">四国</option>
-                <option value="九州">九州</option>
-              </select>
+        <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-primary/5 to-emerald-500/5 rounded-full blur-3xl -mr-48 -mt-48" />
+        <div className="absolute bottom-0 left-0 w-80 h-80 bg-gradient-to-tr from-blue-500/5 to-purple-500/5 rounded-full blur-3xl -ml-40 -mb-40" />
+        
+        <div className="relative z-10">
+          <div className="text-center mb-10">
+            <div className="inline-flex items-center gap-2 bg-gradient-to-r from-primary/10 to-emerald-500/10 rounded-full px-5 py-2 mb-4">
+              <Sparkles className="w-4 h-4 text-primary" />
+              <span className="text-sm font-bold text-primary">無料診断</span>
             </div>
+            <h2 className="text-3xl md:text-4xl font-black text-gray-900 mb-4 bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
+              あなたの電気代削減額を診断
+            </h2>
+            <p className="text-gray-600 text-lg">
+              お住まいのエリアと月額電気代を入力してください
+            </p>
+          </div>
 
-            <div>
-              <label htmlFor="cost" className="block text-sm font-semibold text-gray-900 mb-3">
-                現在の月額電気代（円）
-              </label>
-              <div className="relative">
-                <input
-                  id="cost"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={monthlyCost}
-                  onChange={(e) => setMonthlyCost(e.target.value)}
-                  className="w-full px-4 py-4 rounded-xl border-2 border-gray-200 bg-white text-gray-900 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-base"
-                  placeholder="例: 15000"
+          <form onSubmit={handleSubmit} className="space-y-8">
+            <div className="grid md:grid-cols-2 gap-6">
+              <div>
+                <label htmlFor="area" className="block text-sm font-bold text-gray-900 mb-3">
+                  お住まいのエリア
+                </label>
+                <select
+                  id="area"
+                  value={area}
+                  onChange={(e) => setArea(e.target.value)}
+                  className="w-full px-5 py-4 rounded-2xl border-2 border-gray-200 bg-white text-gray-900 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-base font-medium shadow-sm hover:shadow-md"
                   required
-                />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 font-medium">
-                  円
-                </span>
+                >
+                  <option value="">選択してください</option>
+                  <option value="北海道">北海道</option>
+                  <option value="東北">東北</option>
+                  <option value="東京">東京</option>
+                  <option value="中部">中部</option>
+                  <option value="北陸">北陸</option>
+                  <option value="関西">関西</option>
+                  <option value="中国">中国</option>
+                  <option value="四国">四国</option>
+                  <option value="九州">九州</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="cost" className="block text-sm font-bold text-gray-900 mb-3">
+                  現在の月額電気代（円）
+                </label>
+                <div className="relative">
+                  <input
+                    id="cost"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={monthlyCost}
+                    onChange={(e) => setMonthlyCost(e.target.value)}
+                    className="w-full px-5 py-4 rounded-2xl border-2 border-gray-200 bg-white text-gray-900 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-base font-medium shadow-sm hover:shadow-md"
+                    placeholder="例: 15000"
+                    required
+                  />
+                  <span className="absolute right-5 top-1/2 -translate-y-1/2 text-gray-500 font-bold">
+                    円
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* 事業形態選択 */}
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-3">
-              事業形態
-            </label>
-            <div className="grid grid-cols-3 gap-3">
-              {(['individual', 'soloProprietor', 'corporate'] as const).map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => {
-                    setBusinessType(type)
-                    if (type === 'individual') setTaxCondition('0')
-                    else if (type === 'soloProprietor') setTaxCondition('20')
-                    else setTaxCondition('corporateSmall800')
-                  }}
-                  className={`px-4 py-4 rounded-xl border-2 font-semibold transition-all text-sm md:text-base ${
-                    businessType === type
-                      ? 'border-primary bg-primary text-white shadow-lg shadow-primary/25'
-                      : 'border-gray-200 bg-white text-gray-700 hover:border-primary/50 hover:bg-primary/5'
-                  }`}
-                >
-                  {type === 'individual' ? '個人' : type === 'soloProprietor' ? '個人事業主' : '法人'}
-                </button>
-              ))}
+            <div>
+              <label className="block text-sm font-bold text-gray-900 mb-4">
+                事業形態
+              </label>
+              <div className="grid grid-cols-3 gap-3">
+                {(['individual', 'soloProprietor', 'corporate'] as const).map((type) => (
+                  <motion.button
+                    key={type}
+                    type="button"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      setBusinessType(type)
+                      if (type === 'individual') setTaxCondition('0')
+                      else if (type === 'soloProprietor') setTaxCondition('20')
+                      else setTaxCondition('corporateSmall800')
+                    }}
+                    className={`px-4 py-4 rounded-2xl border-2 font-bold transition-all text-sm md:text-base shadow-sm ${
+                      businessType === type
+                        ? 'border-primary bg-gradient-to-br from-primary to-emerald-600 text-white shadow-lg shadow-primary/30'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-primary/50 hover:bg-primary/5 hover:shadow-md'
+                    }`}
+                  >
+                    {type === 'individual' ? '個人' : type === 'soloProprietor' ? '個人事業主' : '法人'}
+                  </motion.button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          {/* 条件選択 */}
-          {businessType === 'individual' && (
-            <motion.div {...fadeInUp} className="p-5 bg-gray-50 rounded-xl border border-gray-200">
-              <p className="text-sm text-gray-600 flex items-center gap-2">
-                <Info className="w-4 h-4 text-gray-400" />
-                個人の場合、一括損金計上はできないため節税効果はありません。
-              </p>
-            </motion.div>
-          )}
-
-          {businessType === 'soloProprietor' && (
-            <motion.div {...fadeInUp}>
-              <label className="block text-sm font-semibold text-gray-900 mb-3">
-                所得税率（課税所得に応じて選択）
-              </label>
-              <select
-                value={taxCondition}
-                onChange={(e) => setTaxCondition(e.target.value)}
-                className="w-full px-4 py-4 rounded-xl border-2 border-gray-200 bg-white text-gray-900 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-base"
-              >
-                <option value="5">5% （課税所得195万円以下）</option>
-                <option value="10">10% （課税所得195万円超〜330万円以下）</option>
-                <option value="20">20% （課税所得330万円超〜695万円以下）</option>
-                <option value="23">23% （課税所得695万円超〜900万円以下）</option>
-                <option value="33">33% （課税所得900万円超〜1,800万円以下）</option>
-                <option value="40">40% （課税所得1,800万円超〜4,000万円以下）</option>
-                <option value="45">45% （課税所得4,000万円超）</option>
-              </select>
-            </motion.div>
-          )}
-
-          {businessType === 'corporate' && (
-            <motion.div {...fadeInUp}>
-              <label className="block text-sm font-semibold text-gray-900 mb-3">
-                法人規模・所得区分
-              </label>
-              <select
-                value={taxCondition}
-                onChange={(e) => setTaxCondition(e.target.value)}
-                className="w-full px-4 py-4 rounded-xl border-2 border-gray-200 bg-white text-gray-900 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-base"
-              >
-                <option value="corporateSmall800">中小法人（資本金1億円以下・所得800万円以下）税率15%</option>
-                <option value="corporateSmall800Plus">中小法人（資本金1億円以下・所得800万円超）税率23.2%</option>
-              </select>
-            </motion.div>
-          )}
-
-          {error && (
-            <motion.div {...fadeInUp} className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">
-              {error}
-            </motion.div>
-          )}
-
-          <Button
-            type="submit"
-            size="lg"
-            disabled={loading || !area || !monthlyCost}
-            className="w-full h-14 md:h-16 text-base md:text-lg font-bold bg-gradient-to-r from-primary via-primary to-emerald-600 hover:shadow-xl hover:shadow-primary/30 transition-all disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                計算中...
-              </>
-            ) : (
-              <>
-                <Calculator className="mr-2 w-5 h-5" />
-                削減額を計算する
-              </>
+            {businessType === 'individual' && (
+              <motion.div {...fadeInUp} className="p-5 bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl border border-gray-200">
+                <p className="text-sm text-gray-600 flex items-center gap-2">
+                  <Info className="w-4 h-4 text-gray-400" />
+                  個人の場合、一括損金計上はできないため節税効果はありません。
+                </p>
+              </motion.div>
             )}
-          </Button>
-        </form>
+
+            {businessType === 'soloProprietor' && (
+              <motion.div {...fadeInUp}>
+                <label className="block text-sm font-bold text-gray-900 mb-3">
+                  所得税率（課税所得に応じて選択）
+                </label>
+                <select
+                  value={taxCondition}
+                  onChange={(e) => setTaxCondition(e.target.value)}
+                  className="w-full px-5 py-4 rounded-2xl border-2 border-gray-200 bg-white text-gray-900 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-base font-medium shadow-sm hover:shadow-md"
+                >
+                  <option value="5">5% （課税所得195万円以下）</option>
+                  <option value="10">10% （課税所得195万円超〜330万円以下）</option>
+                  <option value="20">20% （課税所得330万円超〜695万円以下）</option>
+                  <option value="23">23% （課税所得695万円超〜900万円以下）</option>
+                  <option value="33">33% （課税所得900万円超〜1,800万円以下）</option>
+                  <option value="40">40% （課税所得1,800万円超〜4,000万円以下）</option>
+                  <option value="45">45% （課税所得4,000万円超）</option>
+                </select>
+              </motion.div>
+            )}
+
+            {businessType === 'corporate' && (
+              <motion.div {...fadeInUp}>
+                <label className="block text-sm font-bold text-gray-900 mb-3">
+                  法人規模・所得区分
+                </label>
+                <select
+                  value={taxCondition}
+                  onChange={(e) => setTaxCondition(e.target.value)}
+                  className="w-full px-5 py-4 rounded-2xl border-2 border-gray-200 bg-white text-gray-900 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all text-base font-medium shadow-sm hover:shadow-md"
+                >
+                  <option value="corporateSmall800">中小法人（資本金1億円以下・所得800万円以下）税率15%</option>
+                  <option value="corporateSmall800Plus">中小法人（資本金1億円以下・所得800万円超）税率23.2%</option>
+                </select>
+              </motion.div>
+            )}
+
+            {error && (
+              <motion.div {...fadeInUp} className="p-5 rounded-2xl bg-red-50 border-2 border-red-200 text-red-600 text-sm font-medium">
+                {error}
+              </motion.div>
+            )}
+
+            <Button
+              type="submit"
+              size="lg"
+              disabled={loading || !area || !monthlyCost}
+              className="w-full h-16 md:h-18 text-lg md:text-xl font-black bg-gradient-to-r from-primary via-emerald-600 to-emerald-500 hover:shadow-2xl hover:shadow-primary/40 transition-all disabled:opacity-50 relative overflow-hidden group"
+            >
+              <span className="relative z-10 flex items-center justify-center">
+                {loading ? (
+                  <>
+                    <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin mr-3" />
+                    計算中...
+                  </>
+                ) : (
+                  <>
+                    <Calculator className="mr-3 w-6 h-6" />
+                    削減額を計算する
+                  </>
+                )}
+              </span>
+              <div className="absolute inset-0 bg-gradient-to-r from-emerald-600 to-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+            </Button>
+          </form>
+        </div>
       </motion.div>
 
       {/* 結果表示 */}
@@ -540,26 +564,26 @@ export function SimulatorForm() {
           className="space-y-12 md:space-y-16"
         >
           {/* 月別電気代グラフ */}
-          <motion.div {...fadeInUp} className="bg-white rounded-3xl border border-gray-100 p-6 md:p-10 shadow-lg shadow-gray-100/50">
-            <div className="mb-8">
-              <h3 className="text-2xl md:text-3xl font-bold text-gray-900 mb-3">
+          <motion.div {...fadeInUp} className="bg-white rounded-3xl border border-gray-100 p-6 md:p-10 shadow-2xl shadow-gray-200/50">
+            <div className="mb-10">
+              <h3 className="text-3xl md:text-4xl font-black text-gray-900 mb-4">
                 {result.area}エリアの年間電気代推移
               </h3>
-              <p className="text-gray-600">
+              <p className="text-gray-600 text-lg">
                 スポット電力価格の変動を反映した削減効果
               </p>
             </div>
 
-            <div className="h-80 md:h-96">
+            <div className="h-80 md:h-96 bg-gradient-to-br from-gray-50 to-white rounded-2xl p-6">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={result.monthlyData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorCurrent" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
                       <stop offset="95%" stopColor="#ef4444" stopOpacity={0.02} />
                     </linearGradient>
                     <linearGradient id="colorReduced" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#7CB342" stopOpacity={0.2} />
+                      <stop offset="5%" stopColor="#7CB342" stopOpacity={0.3} />
                       <stop offset="95%" stopColor="#7CB342" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
@@ -568,26 +592,27 @@ export function SimulatorForm() {
                     dataKey="month"
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tick={{ fill: "#6b7280", fontSize: 13, fontWeight: 600 }}
                   />
                   <YAxis
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fill: "#6b7280", fontSize: 12 }}
+                    tick={{ fill: "#6b7280", fontSize: 13, fontWeight: 600 }}
                     tickFormatter={(value) => `¥${(value / 1000).toFixed(0)}k`}
                   />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: '#fff',
                       border: 'none',
-                      borderRadius: '12px',
-                      boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
-                      padding: '12px 16px',
+                      borderRadius: '16px',
+                      boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
+                      padding: '16px 20px',
                     }}
                     formatter={(value: number) => [`¥${value.toLocaleString()}`, '']}
+                    labelStyle={{ fontWeight: 700, marginBottom: '8px' }}
                   />
                   <Legend
-                    wrapperStyle={{ paddingTop: '24px' }}
+                    wrapperStyle={{ paddingTop: '32px' }}
                     iconType="circle"
                   />
                   <Area
@@ -595,24 +620,24 @@ export function SimulatorForm() {
                     dataKey="currentCost"
                     name="従来（固定）"
                     stroke="#ef4444"
-                    strokeWidth={3}
+                    strokeWidth={4}
                     fill="url(#colorCurrent)"
-                    dot={{ fill: "#ef4444", strokeWidth: 2, r: 4, stroke: "#fff" }}
+                    dot={{ fill: "#ef4444", strokeWidth: 2, r: 5, stroke: "#fff" }}
                   />
                   <Area
                     type="monotone"
                     dataKey="reducedCost"
                     name="削減後（変動反映）"
                     stroke="#7CB342"
-                    strokeWidth={3}
+                    strokeWidth={4}
                     fill="url(#colorReduced)"
-                    dot={{ fill: "#7CB342", strokeWidth: 2, r: 4, stroke: "#fff" }}
+                    dot={{ fill: "#7CB342", strokeWidth: 2, r: 5, stroke: "#fff" }}
                   />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
 
-            <div className="mt-8 text-xs text-gray-500 text-center">
+            <div className="mt-8 text-sm text-gray-500 text-center font-medium">
               ※ 2025年度データ参照（JEPXスポット市場価格に基づく月別変動を反映）
             </div>
           </motion.div>
@@ -620,58 +645,58 @@ export function SimulatorForm() {
           {/* 削減効果サマリー */}
           <motion.div 
             {...fadeInUp}
-            className="bg-gradient-to-br from-primary via-primary to-emerald-600 rounded-3xl p-8 md:p-12 shadow-2xl text-white overflow-hidden relative"
+            className="bg-gradient-to-br from-primary via-emerald-600 to-emerald-500 rounded-3xl p-8 md:p-12 shadow-2xl text-white overflow-hidden relative"
           >
-            <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-32 -mt-32" />
-            <div className="absolute bottom-0 left-0 w-48 h-48 bg-white/5 rounded-full -ml-24 -mb-24" />
+            <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full blur-3xl -mr-48 -mt-48" />
+            <div className="absolute bottom-0 left-0 w-80 h-80 bg-white/10 rounded-full blur-3xl -ml-40 -mb-40" />
             
             <div className="relative z-10">
-              <div className="text-center mb-10">
-                <div className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-full px-5 py-2 mb-6">
+              <div className="text-center mb-12">
+                <div className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-full px-6 py-3 mb-6">
                   <TrendingDown className="w-5 h-5" />
-                  <span className="text-sm font-semibold">年間削減効果</span>
+                  <span className="text-sm font-bold">年間削減効果</span>
                 </div>
-                <h2 className="text-4xl md:text-5xl font-black mb-3">
+                <h2 className="text-5xl md:text-6xl font-black mb-4">
                   削減率 {result.reductionRate}%
                 </h2>
-                <p className="text-white/90 text-lg">
+                <p className="text-white/90 text-xl font-medium">
                   AI-EMSによるスポット価格最適化
                 </p>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-6 mb-10">
+              <div className="grid md:grid-cols-2 gap-6 mb-12">
                 <motion.div 
-                  whileHover={{ scale: 1.02 }}
-                  className="bg-white/15 backdrop-blur-sm rounded-2xl p-6 md:p-8 border border-white/20"
+                  whileHover={{ scale: 1.03 }}
+                  className="bg-white/15 backdrop-blur-sm rounded-3xl p-8 border-2 border-white/30 shadow-xl"
                 >
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-                      <Calendar className="w-6 h-6" />
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center">
+                      <Calendar className="w-7 h-7" />
                     </div>
-                    <span className="text-sm font-medium text-white/90">平均月間削減額</span>
+                    <span className="text-sm font-bold text-white/90">平均月間削減額</span>
                   </div>
-                  <p className="text-4xl md:text-5xl font-black mb-2">
+                  <p className="text-5xl md:text-6xl font-black mb-3">
                     ¥{result.avgMonthlySavings.toLocaleString()}
                   </p>
-                  <p className="text-xs text-white/70">
+                  <p className="text-sm text-white/70 font-medium">
                     年間平均の月額削減額
                   </p>
                 </motion.div>
 
                 <motion.div 
-                  whileHover={{ scale: 1.02 }}
-                  className="bg-white/15 backdrop-blur-sm rounded-2xl p-6 md:p-8 border border-white/20"
+                  whileHover={{ scale: 1.03 }}
+                  className="bg-white/15 backdrop-blur-sm rounded-3xl p-8 border-2 border-white/30 shadow-xl"
                 >
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-                      <DollarSign className="w-6 h-6" />
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center">
+                      <DollarSign className="w-7 h-7" />
                     </div>
-                    <span className="text-sm font-medium text-white/90">年間削減額</span>
+                    <span className="text-sm font-bold text-white/90">年間削減額</span>
                   </div>
-                  <p className="text-4xl md:text-5xl font-black mb-2">
+                  <p className="text-5xl md:text-6xl font-black mb-3">
                     ¥{result.annualSavings.toLocaleString()}
                   </p>
-                  <p className="text-xs text-white/70">
+                  <p className="text-sm text-white/70 font-medium">
                     12ヶ月分の合計削減額
                   </p>
                 </motion.div>
@@ -681,7 +706,7 @@ export function SimulatorForm() {
                 <Button
                   size="lg"
                   variant="outline"
-                  className="bg-white text-primary hover:bg-white/90 border-0 h-14 font-bold shadow-lg"
+                  className="bg-white text-primary hover:bg-white/95 border-0 h-16 font-black shadow-2xl text-base"
                   asChild
                 >
                   <a
@@ -697,7 +722,7 @@ export function SimulatorForm() {
                 <Button
                   size="lg"
                   variant="outline"
-                  className="bg-white text-primary hover:bg-white/90 border-0 h-14 font-bold shadow-lg"
+                  className="bg-white text-primary hover:bg-white/95 border-0 h-16 font-black shadow-2xl text-base"
                   asChild
                 >
                   <a
@@ -713,7 +738,7 @@ export function SimulatorForm() {
                 <Button
                   size="lg"
                   variant="outline"
-                  className="bg-white text-primary hover:bg-white/90 border-0 h-14 font-bold shadow-lg"
+                  className="bg-white text-primary hover:bg-white/95 border-0 h-16 font-black shadow-2xl text-base"
                   asChild
                 >
                   <a href="#agency">
@@ -725,129 +750,161 @@ export function SimulatorForm() {
             </div>
           </motion.div>
 
-          {/* 電気代上昇シナリオセクション */}
-          <motion.div {...fadeInUp} className="bg-white rounded-3xl border border-gray-100 p-6 md:p-10 shadow-lg shadow-gray-100/50">
+          {/* シナリオセクション */}
+          <motion.div {...fadeInUp} className="bg-white rounded-3xl border border-gray-100 p-6 md:p-10 shadow-2xl shadow-gray-200/50">
             <div className="mb-10">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center">
-                  <TrendingUp className="w-6 h-6 text-primary" />
+                <div className="w-14 h-14 bg-gradient-to-br from-primary to-emerald-600 rounded-2xl flex items-center justify-center shadow-lg shadow-primary/30">
+                  <TrendingUp className="w-7 h-7 text-white" />
                 </div>
-                <h3 className="text-2xl md:text-3xl font-bold text-gray-900">
+                <h3 className="text-3xl md:text-4xl font-black text-gray-900">
                   電気代上昇シナリオ別シミュレーション
                 </h3>
               </div>
-              <p className="text-gray-600 text-lg">
+              <p className="text-gray-600 text-lg font-medium">
                 過去データと将来予測に基づく3つのシナリオで投資回収期間を算出
               </p>
             </div>
 
+            {/* シナリオ選択タブ */}
+            <div className="mb-10">
+              <p className="text-sm font-bold text-gray-900 mb-4">シナリオを選択してください</p>
+              <div className="grid grid-cols-3 gap-3 p-2 bg-gray-100 rounded-2xl">
+                {(Object.keys(PRICE_SCENARIOS) as ScenarioKey[]).map((key) => {
+                  const scenario = PRICE_SCENARIOS[key]
+                  const isSelected = selectedScenario === key
+                  
+                  return (
+                    <motion.button
+                      key={key}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setSelectedScenario(key)}
+                      className={`px-4 py-4 rounded-xl font-bold transition-all text-sm md:text-base ${
+                        isSelected
+                          ? 'bg-white shadow-lg scale-105 ' + scenario.textColor
+                          : 'bg-transparent text-gray-600 hover:bg-white/50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <div className={`w-3 h-3 rounded-full`} style={{ backgroundColor: scenario.color }} />
+                        <span>{scenario.name}</span>
+                        <span className="text-xs opacity-75">({scenario.shortName})</span>
+                      </div>
+                    </motion.button>
+                  )
+                })}
+              </div>
+            </div>
+
             {/* シナリオ説明カード */}
-            <motion.div 
-              variants={staggerChildren}
-              initial="initial"
-              animate="animate"
-              className="grid md:grid-cols-3 gap-6 mb-12"
-            >
-              {/* 現状維持 */}
-              <motion.div 
-                variants={fadeInUp}
-                whileHover={{ y: -4 }}
-                className="bg-gray-50 border-2 border-gray-200 rounded-2xl p-6 transition-all"
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={selectedScenario}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className={`${PRICE_SCENARIOS[selectedScenario].bgColor} border-2 ${PRICE_SCENARIOS[selectedScenario].borderColor} rounded-3xl p-8 mb-10 relative overflow-hidden`}
               >
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: PRICE_SCENARIOS.noChange.color }} />
-                  <h4 className="font-bold text-gray-900 text-lg">現状維持（0%）</h4>
-                </div>
-                <p className="text-sm text-gray-600 mb-4 leading-relaxed">
-                  最も保守的な予測。電気料金が今後横ばいで推移すると仮定したケース。
-                </p>
-                <div className="bg-white rounded-xl p-4 border border-gray-200">
-                  <div className="flex items-start gap-2">
-                    <Info className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
-                    <p className="text-xs text-gray-500 leading-relaxed">
-                      過去10年のデータでは電気代は上昇傾向にあるため、この想定は楽観的である可能性があります。
-                    </p>
+                <div className="absolute top-0 right-0 w-64 h-64 opacity-10 rounded-full blur-3xl -mr-32 -mt-32" 
+                     style={{ backgroundColor: PRICE_SCENARIOS[selectedScenario].color }} />
+                
+                <div className="relative z-10">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg" 
+                         style={{ backgroundColor: PRICE_SCENARIOS[selectedScenario].color }}>
+                      <TrendingUp className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-gray-900 text-2xl">{PRICE_SCENARIOS[selectedScenario].name}</h4>
+                      <p className="text-sm text-gray-600 font-medium">年{PRICE_SCENARIOS[selectedScenario].rate * 100}%の電気代上昇を想定</p>
+                    </div>
                   </div>
-                </div>
-              </motion.div>
 
-              {/* 標準シナリオ */}
-              <motion.div 
-                variants={fadeInUp}
-                whileHover={{ y: -4 }}
-                className="bg-primary/5 border-2 border-primary rounded-2xl p-6 transition-all relative overflow-hidden"
-              >
-                <div className="absolute top-4 right-4">
-                  <span className="inline-flex items-center gap-1 bg-primary text-white text-xs font-bold px-3 py-1 rounded-full">
-                    <Zap className="w-3 h-3" />
-                    推奨
-                  </span>
-                </div>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: PRICE_SCENARIOS.standard.color }} />
-                  <h4 className="font-bold text-gray-900 text-lg">標準シナリオ（3%）</h4>
-                </div>
-                <p className="text-sm text-gray-600 mb-4 leading-relaxed">
-                  過去10年間（2014-2024年）の実績データに基づく現実的な予測。
-                </p>
-                <div className="bg-white rounded-xl p-4 border border-primary/20">
-                  <p className="text-xs font-semibold text-gray-900 mb-2">主な上昇要因：</p>
-                  <ul className="text-xs text-gray-600 space-y-1.5">
-                    <li className="flex items-start gap-2">
-                      <span className="text-primary mt-0.5">•</span>
-                      <span>再エネ賦課金の段階的増加</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="text-primary mt-0.5">•</span>
-                      <span>発電所の維持・更新コスト</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="text-primary mt-0.5">•</span>
-                      <span>送配電網の強靭化投資</span>
-                    </li>
-                  </ul>
-                </div>
-              </motion.div>
+                  {selectedScenario === 'noChange' && (
+                    <div className="space-y-4">
+                      <p className="text-gray-700 leading-relaxed font-medium">
+                        最も保守的な予測。電気料金が今後横ばいで推移すると仮定したケースです。
+                      </p>
+                      <div className="bg-white rounded-2xl p-5 border border-gray-200">
+                        <div className="flex items-start gap-2">
+                          <Info className="w-5 h-5 text-gray-400 mt-0.5 shrink-0" />
+                          <p className="text-sm text-gray-600 leading-relaxed">
+                            過去10年のデータでは電気代は上昇傾向にあるため、この想定は楽観的である可能性があります。
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-              {/* 悪化シナリオ */}
-              <motion.div 
-                variants={fadeInUp}
-                whileHover={{ y: -4 }}
-                className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-6 transition-all"
-              >
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: PRICE_SCENARIOS.worst.color }} />
-                  <h4 className="font-bold text-gray-900 text-lg">悪化シナリオ（5%）</h4>
-                </div>
-                <p className="text-sm text-gray-600 mb-4 leading-relaxed">
-                  円安・エネルギー危機の長期化を想定した悲観的ケース。
-                </p>
-                <div className="bg-white rounded-xl p-4 border border-orange-200">
-                  <p className="text-xs font-semibold text-gray-900 mb-2">想定される要因：</p>
-                  <ul className="text-xs text-gray-600 space-y-1.5">
-                    <li className="flex items-start gap-2">
-                      <span className="text-orange-500 mt-0.5">•</span>
-                      <span>円安の長期化（1ドル=150円超）</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="text-orange-500 mt-0.5">•</span>
-                      <span>化石燃料価格の高騰継続</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="text-orange-500 mt-0.5">•</span>
-                      <span>原発再稼働遅延</span>
-                    </li>
-                  </ul>
-                  <p className="text-xs text-orange-600 font-semibold mt-3">
-                    ※2022年は前年比+15%を記録
-                  </p>
+                  {selectedScenario === 'standard' && (
+                    <div className="space-y-4">
+                      <p className="text-gray-700 leading-relaxed font-medium">
+                        過去10年間（2014-2024年）の実績データに基づく最も現実的な予測です。
+                      </p>
+                      <div className="bg-white rounded-2xl p-5 border border-primary/30">
+                        <p className="text-sm font-bold text-gray-900 mb-3">主な上昇要因：</p>
+                        <ul className="text-sm text-gray-700 space-y-2">
+                          <li className="flex items-start gap-2">
+                            <span className="text-primary font-bold mt-0.5">•</span>
+                            <span>再エネ賦課金の段階的増加</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="text-primary font-bold mt-0.5">•</span>
+                            <span>老朽化した発電所の維持・更新コスト</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="text-primary font-bold mt-0.5">•</span>
+                            <span>送配電網の強靭化投資</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="text-primary font-bold mt-0.5">•</span>
+                            <span>人件費・メンテナンス費用の上昇</span>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedScenario === 'worst' && (
+                    <div className="space-y-4">
+                      <p className="text-gray-700 leading-relaxed font-medium">
+                        地政学リスクやエネルギー安全保障の観点から、電気料金が急速に上昇するシナリオです。
+                      </p>
+                      <div className="bg-white rounded-2xl p-5 border border-orange-300">
+                        <p className="text-sm font-bold text-gray-900 mb-3">想定される悪化要因：</p>
+                        <ul className="text-sm text-gray-700 space-y-2">
+                          <li className="flex items-start gap-2">
+                            <span className="text-orange-500 font-bold mt-0.5">•</span>
+                            <span>円安の長期化（1ドル=150円超の定着）</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="text-orange-500 font-bold mt-0.5">•</span>
+                            <span>LNG・石炭の輸入コスト増</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="text-orange-500 font-bold mt-0.5">•</span>
+                            <span>原子力発電所の再稼働遅延</span>
+                          </li>
+                          <li className="flex items-start gap-2">
+                            <span className="text-orange-500 font-bold mt-0.5">•</span>
+                            <span>カーボンニュートラル対応コスト</span>
+                          </li>
+                        </ul>
+                        <p className="text-sm text-orange-600 font-bold mt-4 p-3 bg-orange-50 rounded-xl">
+                          ※ 2022年のエネルギー危機時は前年比+15%を記録
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </motion.div>
-            </motion.div>
+            </AnimatePresence>
 
             {/* 長期予測グラフ */}
-            <div className="bg-gray-50 rounded-2xl p-6 md:p-8 mb-12">
-              <h4 className="font-bold text-gray-900 text-xl mb-6">長期電気代推移予測（20年間）</h4>
+            <div className="bg-gradient-to-br from-gray-50 to-white rounded-3xl p-6 md:p-8 mb-10 border border-gray-100">
+              <h4 className="font-black text-gray-900 text-2xl mb-6">長期電気代推移予測（20年間）</h4>
               <div className="h-80 md:h-96">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={result.longTermData.slice(0, 21)} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
@@ -856,73 +913,57 @@ export function SimulatorForm() {
                       dataKey="year"
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fill: "#6b7280", fontSize: 12 }}
-                      label={{ value: '経過年数', position: 'insideBottom', offset: -5, fill: '#6b7280' }}
+                      tick={{ fill: "#6b7280", fontSize: 13, fontWeight: 600 }}
+                      label={{ value: '経過年数', position: 'insideBottom', offset: -5, fill: '#6b7280', fontWeight: 700 }}
                     />
                     <YAxis
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fill: "#6b7280", fontSize: 12 }}
+                      tick={{ fill: "#6b7280", fontSize: 13, fontWeight: 600 }}
                       tickFormatter={(value) => `¥${(value / 10000).toFixed(0)}万`}
                     />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: '#fff',
                         border: 'none',
-                        borderRadius: '12px',
-                        boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
-                        padding: '12px 16px',
+                        borderRadius: '16px',
+                        boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
+                        padding: '16px 20px',
                       }}
                       formatter={(value: number) => `¥${value.toLocaleString()}`}
+                      labelStyle={{ fontWeight: 700, marginBottom: '8px' }}
                     />
-                    <Legend wrapperStyle={{ paddingTop: '24px' }} />
+                    <Legend wrapperStyle={{ paddingTop: '32px' }} />
                     
                     <Line
                       type="monotone"
-                      dataKey="costNoChange"
-                      name="削減前(0%)"
-                      stroke={PRICE_SCENARIOS.noChange.color}
-                      strokeWidth={2}
-                      strokeDasharray="5 5"
-                      dot={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="costStandard"
-                      name="削減前(3%)"
-                      stroke={PRICE_SCENARIOS.standard.color}
-                      strokeWidth={3}
-                      dot={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="costWorst"
-                      name="削減前(5%)"
-                      stroke={PRICE_SCENARIOS.worst.color}
-                      strokeWidth={3}
-                      dot={false}
-                    />
-                    
-                    <Line
-                      type="monotone"
-                      dataKey="costReducedStandard"
-                      name="ENELEAGE導入後(3%)"
-                      stroke="#3b82f6"
+                      dataKey={`cost${selectedScenario === 'noChange' ? 'NoChange' : selectedScenario === 'standard' ? 'Standard' : 'Worst'}`}
+                      name="削減前"
+                      stroke={PRICE_SCENARIOS[selectedScenario].color}
                       strokeWidth={4}
+                      dot={false}
+                    />
+                    
+                    <Line
+                      type="monotone"
+                      dataKey={`costReduced${selectedScenario === 'noChange' ? 'NoChange' : selectedScenario === 'standard' ? 'Standard' : 'Worst'}`}
+                      name="ENELEAGE導入後"
+                      stroke="#3b82f6"
+                      strokeWidth={5}
                       dot={false}
                     />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-              <div className="mt-6 text-xs text-gray-500 text-center">
-                ※ ENELEAGE導入後も電気代は上昇しますが、削減率は維持されるため差額が拡大します
+              <div className="mt-8 text-sm text-gray-500 text-center font-medium">
+                ※ ENELEAGE導入後も電気代は上昇しますが、削減率{result.reductionRate}%は維持されるため削減額の差は拡大します
               </div>
             </div>
 
             {/* 投資回収グラフ */}
-            <div className="bg-gray-50 rounded-2xl p-6 md:p-8 mb-12">
-              <h4 className="font-bold text-gray-900 text-xl mb-2">投資回収期間グラフ</h4>
-              <p className="text-sm text-gray-600 mb-6">
+            <div className="bg-gradient-to-br from-gray-50 to-white rounded-3xl p-6 md:p-8 mb-10 border border-gray-100">
+              <h4 className="font-black text-gray-900 text-2xl mb-2">投資回収期間グラフ</h4>
+              <p className="text-sm text-gray-600 mb-6 font-medium">
                 {getBusinessTypeName()}（{getTaxConditionName()}）の場合
               </p>
               <div className="h-80 md:h-96">
@@ -933,49 +974,50 @@ export function SimulatorForm() {
                       dataKey="year"
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fill: "#6b7280", fontSize: 12 }}
-                      label={{ value: '経過年数', position: 'insideBottom', offset: -5, fill: '#6b7280' }}
+                      tick={{ fill: "#6b7280", fontSize: 13, fontWeight: 600 }}
+                      label={{ value: '経過年数', position: 'insideBottom', offset: -5, fill: '#6b7280', fontWeight: 700 }}
                     />
                     <YAxis
                       axisLine={false}
                       tickLine={false}
-                      tick={{ fill: "#6b7280", fontSize: 12 }}
+                      tick={{ fill: "#6b7280", fontSize: 13, fontWeight: 600 }}
                       tickFormatter={(value) => `¥${(value / 10000).toFixed(0)}万`}
                     />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: '#fff',
                         border: 'none',
-                        borderRadius: '12px',
-                        boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
-                        padding: '12px 16px',
+                        borderRadius: '16px',
+                        boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
+                        padding: '16px 20px',
                       }}
                       formatter={(value: number) => `¥${value.toLocaleString()}`}
+                      labelStyle={{ fontWeight: 700, marginBottom: '8px' }}
                     />
                     <Legend 
-                      wrapperStyle={{ paddingTop: '24px' }}
+                      wrapperStyle={{ paddingTop: '32px' }}
                       content={(props) => {
                         const { payload } = props
                         return (
-                          <div className="flex flex-wrap justify-center gap-4 pt-4">
+                          <div className="flex flex-wrap justify-center gap-6 pt-4">
                             {payload?.map((entry, index) => (
                               <div key={index} className="flex items-center gap-2">
                                 <div 
-                                  className="w-3 h-3 rounded-full" 
+                                  className="w-4 h-4 rounded-full" 
                                   style={{ 
                                     backgroundColor: entry.color,
                                     ...(entry.value === '実質投資額' ? { 
-                                      border: `2px solid ${entry.color}`, 
+                                      border: `3px solid ${entry.color}`, 
                                       backgroundColor: 'transparent' 
                                     } : {})
                                   }}
                                 />
-                                <span className="text-xs text-gray-600">{entry.value}</span>
+                                <span className="text-sm text-gray-700 font-semibold">{entry.value}</span>
                               </div>
                             ))}
                             <div className="flex items-center gap-2">
-                              <div className="w-6 h-0.5 border-t-2 border-dashed border-orange-500" />
-                              <span className="text-xs text-gray-600">15年保証</span>
+                              <div className="w-8 h-0.5 border-t-2 border-dashed border-orange-500" />
+                              <span className="text-sm text-gray-700 font-semibold">15年保証</span>
                             </div>
                           </div>
                         )
@@ -994,217 +1036,110 @@ export function SimulatorForm() {
                       dataKey="investment"
                       name="実質投資額"
                       stroke="#ef4444"
-                      strokeWidth={3}
+                      strokeWidth={4}
                       dot={false}
                       strokeDasharray="10 5"
                     />
                     
                     <Line
                       type="monotone"
-                      dataKey="cumulativeSavingsNoChange"
-                      name="累積削減額(0%)"
-                      stroke={PRICE_SCENARIOS.noChange.color}
-                      strokeWidth={2}
-                      strokeDasharray="3 3"
-                      dot={false}
-                    />
-                    
-                    <Line
-                      type="monotone"
-                      dataKey="cumulativeSavingsStandard"
-                      name="累積削減額(3%)"
-                      stroke={PRICE_SCENARIOS.standard.color}
-                      strokeWidth={3}
-                      dot={false}
-                    />
-                    
-                    <Line
-                      type="monotone"
-                      dataKey="cumulativeSavingsWorst"
-                      name="累積削減額(5%)"
-                      stroke={PRICE_SCENARIOS.worst.color}
-                      strokeWidth={3}
+                      dataKey={`cumulativeSavings${selectedScenario === 'noChange' ? 'NoChange' : selectedScenario === 'standard' ? 'Standard' : 'Worst'}`}
+                      name="累積削減額"
+                      stroke={PRICE_SCENARIOS[selectedScenario].color}
+                      strokeWidth={5}
                       dot={false}
                     />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
               
-              <div className="mt-6 text-xs text-gray-500 text-center">
+              <div className="mt-8 text-sm text-gray-500 text-center font-medium">
                 ※ 累積削減額が実質投資額を超えた時点で投資回収完了
               </div>
             </div>
 
-            {/* シナリオ別比較カード */}
-            <motion.div 
-              variants={staggerChildren}
-              initial="initial"
-              animate="animate"
-              className="grid md:grid-cols-3 gap-6"
-            >
-              {/* 現状維持 */}
-              <motion.div 
-                variants={fadeInUp}
-                whileHover={{ scale: 1.02 }}
-                className="bg-white border-2 border-gray-200 rounded-2xl p-6 transition-all"
+            {/* シナリオ別結果カード */}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={selectedScenario}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.3 }}
+                className={`${PRICE_SCENARIOS[selectedScenario].bgColor} border-2 ${PRICE_SCENARIOS[selectedScenario].borderColor} rounded-3xl p-8 relative overflow-hidden`}
               >
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: PRICE_SCENARIOS.noChange.color }} />
-                  <h5 className="font-bold text-gray-900">現状維持（0%）</h5>
-                </div>
-                <div className="space-y-5">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-2">20年累積削減額</p>
-                    <p className="text-3xl font-black text-gray-900">
-                      ¥{Math.round(result.total20YearsNoChange / 10000)}万円
-                    </p>
+                <div className="absolute top-0 right-0 w-96 h-96 opacity-10 rounded-full blur-3xl -mr-48 -mt-48" 
+                     style={{ backgroundColor: PRICE_SCENARIOS[selectedScenario].color }} />
+                
+                <div className="relative z-10">
+                  <div className="flex items-center gap-3 mb-8">
+                    <div className="w-5 h-5 rounded-full shadow-lg" style={{ backgroundColor: PRICE_SCENARIOS[selectedScenario].color }} />
+                    <h5 className="font-black text-gray-900 text-2xl">
+                      {PRICE_SCENARIOS[selectedScenario].name}の結果
+                    </h5>
                   </div>
-                  <div>
-                    <p className="text-xs text-gray-500 mb-2">投資回収期間</p>
-                    <p className="text-3xl font-black">
-                      {result.paybackNoChange < 999 ? (
-                        <span className={result.paybackNoChange <= WARRANTY_YEARS ? 'text-emerald-600' : 'text-orange-600'}>
-                          {result.paybackNoChange}年
-                        </span>
-                      ) : (
-                        <span className="text-gray-400 text-xl">回収困難</span>
-                      )}
-                    </p>
-                  </div>
-                  {result.paybackNoChange < 999 && (
-                    result.paybackNoChange <= WARRANTY_YEARS ? (
-                      <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                        <span className="text-sm font-semibold text-emerald-700">15年保証内で回収</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-xl">
-                        <AlertCircle className="w-5 h-5 text-orange-600 shrink-0" />
-                        <span className="text-sm font-semibold text-orange-700">保証期間超過</span>
-                      </div>
-                    )
-                  )}
-                </div>
-              </motion.div>
-
-              {/* 標準シナリオ */}
-              <motion.div 
-                variants={fadeInUp}
-                whileHover={{ scale: 1.02 }}
-                className="bg-primary/5 border-2 border-primary rounded-2xl p-6 transition-all relative overflow-hidden"
-              >
-                <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16" />
-                <div className="relative">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: PRICE_SCENARIOS.standard.color }} />
-                    <h5 className="font-bold text-gray-900">標準シナリオ（3%）</h5>
-                    <span className="ml-auto text-xs bg-primary text-white font-bold px-2 py-1 rounded">推奨</span>
-                  </div>
-                  <div className="space-y-5">
-                    <div>
-                      <p className="text-xs text-gray-500 mb-2">20年累積削減額</p>
-                      <p className="text-3xl font-black text-primary">
-                        ¥{Math.round(result.total20YearsStandard / 10000)}万円
+                  
+                  <div className="grid md:grid-cols-2 gap-8">
+                    <div className="bg-white rounded-2xl p-6 shadow-lg">
+                      <p className="text-sm text-gray-500 mb-3 font-semibold">20年累積削減額</p>
+                      <p className="text-5xl font-black mb-2" style={{ color: PRICE_SCENARIOS[selectedScenario].color }}>
+                        ¥{Math.round((getScenarioData(selectedScenario)?.total20 || 0) / 10000)}万円
                       </p>
                     </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-2">投資回収期間</p>
-                      <p className="text-3xl font-black">
-                        {result.paybackStandard < 999 ? (
-                          <span className={result.paybackStandard <= WARRANTY_YEARS ? 'text-emerald-600' : 'text-orange-600'}>
-                            {result.paybackStandard}年
+                    
+                    <div className="bg-white rounded-2xl p-6 shadow-lg">
+                      <p className="text-sm text-gray-500 mb-3 font-semibold">投資回収期間</p>
+                      <p className="text-5xl font-black mb-4">
+                        {(getScenarioData(selectedScenario)?.payback || 0) < 999 ? (
+                          <span className={(getScenarioData(selectedScenario)?.withinWarranty) ? 'text-emerald-600' : 'text-orange-600'}>
+                            {getScenarioData(selectedScenario)?.payback}年
                           </span>
                         ) : (
-                          <span className="text-gray-400 text-xl">回収困難</span>
+                          <span className="text-gray-400 text-2xl">回収困難</span>
                         )}
                       </p>
-                    </div>
-                    {result.paybackStandard < 999 && (
-                      result.paybackStandard <= WARRANTY_YEARS ? (
-                        <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-                          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                          <span className="text-sm font-semibold text-emerald-700">15年保証内で回収</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-xl">
-                          <AlertCircle className="w-5 h-5 text-orange-600 shrink-0" />
-                          <span className="text-sm font-semibold text-orange-700">保証期間超過</span>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              </motion.div>
-
-              {/* 悪化シナリオ */}
-              <motion.div 
-                variants={fadeInUp}
-                whileHover={{ scale: 1.02 }}
-                className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-6 transition-all"
-              >
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: PRICE_SCENARIOS.worst.color }} />
-                  <h5 className="font-bold text-gray-900">悪化シナリオ（5%）</h5>
-                </div>
-                <div className="space-y-5">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-2">20年累積削減額</p>
-                    <p className="text-3xl font-black text-orange-600">
-                      ¥{Math.round(result.total20YearsWorst / 10000)}万円
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 mb-2">投資回収期間</p>
-                    <p className="text-3xl font-black">
-                      {result.paybackWorst < 999 ? (
-                        <span className={result.paybackWorst <= WARRANTY_YEARS ? 'text-emerald-600' : 'text-orange-600'}>
-                          {result.paybackWorst}年
-                        </span>
-                      ) : (
-                        <span className="text-gray-400 text-xl">回収困難</span>
+                      {(getScenarioData(selectedScenario)?.payback || 0) < 999 && (
+                        (getScenarioData(selectedScenario)?.withinWarranty) ? (
+                          <div className="flex items-center gap-2 p-4 bg-emerald-50 border-2 border-emerald-200 rounded-2xl">
+                            <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
+                            <span className="text-sm font-bold text-emerald-700">15年保証内で回収完了！</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 p-4 bg-orange-50 border-2 border-orange-200 rounded-2xl">
+                            <AlertCircle className="w-6 h-6 text-orange-600 shrink-0" />
+                            <span className="text-sm font-bold text-orange-700">保証期間を超過</span>
+                          </div>
+                        )
                       )}
-                    </p>
+                    </div>
                   </div>
-                  {result.paybackWorst < 999 && (
-                    result.paybackWorst <= WARRANTY_YEARS ? (
-                      <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                        <span className="text-sm font-semibold text-emerald-700">15年保証内で回収</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-xl">
-                        <AlertCircle className="w-5 h-5 text-orange-600 shrink-0" />
-                        <span className="text-sm font-semibold text-orange-700">保証期間超過</span>
-                      </div>
-                    )
-                  )}
                 </div>
               </motion.div>
-            </motion.div>
+            </AnimatePresence>
 
             {/* 費用内訳 */}
-            <div className="mt-12 bg-gray-50 rounded-2xl p-6 md:p-8">
-              <h4 className="font-bold text-gray-900 text-xl mb-6">費用内訳</h4>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center text-base">
-                  <span className="text-gray-600">製品定価</span>
-                  <span className="font-bold text-gray-900 text-lg">¥{result.productPrice.toLocaleString()}</span>
+            <div className="mt-10 bg-gradient-to-br from-gray-50 to-white rounded-3xl p-8 border border-gray-100">
+              <h4 className="font-black text-gray-900 text-2xl mb-8">費用内訳</h4>
+              <div className="space-y-5">
+                <div className="flex justify-between items-center text-lg">
+                  <span className="text-gray-600 font-semibold">製品定価</span>
+                  <span className="font-black text-gray-900 text-xl">¥{result.productPrice.toLocaleString()}</span>
                 </div>
                 {businessType !== 'individual' && (
                   <>
-                    <div className="flex justify-between items-center text-base">
-                      <span className="text-gray-600">税率</span>
-                      <span className="font-bold text-gray-900">{result.taxRate}%</span>
+                    <div className="flex justify-between items-center text-lg">
+                      <span className="text-gray-600 font-semibold">税率</span>
+                      <span className="font-black text-gray-900">{result.taxRate}%</span>
                     </div>
-                    <div className="flex justify-between items-center text-base pt-3 border-t border-gray-200">
-                      <span className="text-gray-600">一括損金による節税額</span>
-                      <span className="font-bold text-primary text-lg">-¥{result.taxSavings.toLocaleString()}</span>
+                    <div className="flex justify-between items-center text-lg pt-4 border-t-2 border-gray-200">
+                      <span className="text-gray-600 font-semibold">一括損金による節税額</span>
+                      <span className="font-black text-primary text-xl">-¥{result.taxSavings.toLocaleString()}</span>
                     </div>
                   </>
                 )}
-                <div className="flex justify-between items-center text-lg font-bold pt-4 border-t-2 border-gray-300">
+                <div className="flex justify-between items-center text-xl font-black pt-5 border-t-4 border-gray-300">
                   <span className="text-gray-900">実質投資額</span>
-                  <span className="text-primary text-2xl">¥{result.actualInvestment.toLocaleString()}</span>
+                  <span className="text-primary text-3xl">¥{result.actualInvestment.toLocaleString()}</span>
                 </div>
               </div>
             </div>
@@ -1213,43 +1148,55 @@ export function SimulatorForm() {
           {/* セールスポイント */}
           <motion.div 
             {...fadeInUp}
-            className="bg-gradient-to-br from-emerald-50 via-blue-50 to-purple-50 border-2 border-primary/20 rounded-3xl p-6 md:p-10 overflow-hidden relative"
+            className="bg-gradient-to-br from-emerald-50 via-blue-50 to-purple-50 border-2 border-primary/30 rounded-3xl p-8 md:p-12 overflow-hidden relative shadow-2xl"
           >
-            <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full -mr-32 -mt-32" />
-            <div className="relative z-10 flex flex-col md:flex-row items-start gap-6">
-              <div className="w-16 h-16 bg-gradient-to-br from-primary to-emerald-600 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-primary/25">
-                <TrendingUp className="w-8 h-8 text-white" />
+            <div className="absolute top-0 right-0 w-96 h-96 bg-primary/5 rounded-full blur-3xl -mr-48 -mt-48" />
+            <div className="absolute bottom-0 left-0 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl -ml-40 -mb-40" />
+            
+            <div className="relative z-10 flex flex-col md:flex-row items-start gap-8">
+              <div className="w-20 h-20 bg-gradient-to-br from-primary via-emerald-600 to-emerald-500 rounded-3xl flex items-center justify-center shrink-0 shadow-2xl shadow-primary/30">
+                <TrendingUp className="w-10 h-10 text-white" />
               </div>
               <div className="flex-1">
-                <h4 className="font-black text-gray-900 text-2xl md:text-3xl mb-4">
+                <h4 className="font-black text-gray-900 text-3xl md:text-4xl mb-6">
                   💡 電気代高騰時代こそENELEAGE
                 </h4>
-                <p className="text-gray-700 mb-6 text-lg leading-relaxed">
+                <p className="text-gray-700 mb-8 text-xl leading-relaxed font-medium">
                   電気代が上昇すればするほど、ENELEAGE導入の削減効果が大きくなります！
                 </p>
-                <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100">
-                  <p className="font-bold text-gray-900 mb-4 text-lg">【例】標準シナリオ（年3%上昇）の場合：</p>
+                <div className="bg-white rounded-3xl p-8 shadow-2xl border border-gray-100">
+                  <p className="font-black text-gray-900 mb-6 text-xl">【例】標準シナリオ（年3%上昇）の場合：</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
-                      <span className="text-gray-600 text-sm">1年後の月間削減額:</span>
-                      <span className="font-bold text-gray-900">¥{result.avgMonthlySavings.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-primary/5 rounded-xl">
-                      <span className="text-gray-600 text-sm">5年後の月間削減額:</span>
-                      <span className="font-bold text-primary">¥{Math.round(result.avgMonthlySavings * 1.46).toLocaleString()} <span className="text-xs">(+46%)</span></span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-primary/5 rounded-xl">
-                      <span className="text-gray-600 text-sm">10年後の月間削減額:</span>
-                      <span className="font-bold text-primary">¥{Math.round(result.avgMonthlySavings * 2.12).toLocaleString()} <span className="text-xs">(+112%)</span></span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-primary/5 rounded-xl">
-                      <span className="text-gray-600 text-sm">15年後の月間削減額:</span>
-                      <span className="font-bold text-primary">¥{Math.round(result.avgMonthlySavings * 2.84).toLocaleString()} <span className="text-xs">(+184%)</span></span>
-                    </div>
+                    {[
+                      { year: '1年後', amount: result.avgMonthlySavings, increase: null },
+                      { year: '5年後', amount: Math.round(result.avgMonthlySavings * 1.46), increase: 46 },
+                      { year: '10年後', amount: Math.round(result.avgMonthlySavings * 2.12), increase: 112 },
+                      { year: '15年後', amount: Math.round(result.avgMonthlySavings * 2.84), increase: 184 },
+                    ].map((item, i) => (
+                      <motion.div
+                        key={i}
+                        whileHover={{ scale: 1.05 }}
+                        className={`flex justify-between items-center p-5 rounded-2xl ${
+                          i === 0 ? 'bg-gray-50' : 'bg-gradient-to-br from-primary/5 to-emerald-500/5 border-2 border-primary/20'
+                        }`}
+                      >
+                        <span className="text-gray-600 text-sm font-bold">{item.year}の月間削減額:</span>
+                        <div className="text-right">
+                          <span className={`font-black ${i === 0 ? 'text-gray-900' : 'text-primary'} text-lg`}>
+                            ¥{item.amount.toLocaleString()}
+                          </span>
+                          {item.increase && (
+                            <span className="text-xs text-primary font-bold ml-2">
+                              (+{item.increase}%)
+                            </span>
+                          )}
+                        </div>
+                      </motion.div>
+                    ))}
                   </div>
-                  <div className="mt-6 p-4 bg-gradient-to-r from-primary/10 to-emerald-500/10 rounded-xl border border-primary/20">
-                    <p className="text-primary font-black text-center text-lg">
-                      導入が早いほど、長期的な削減効果が大きくなります！
+                  <div className="mt-8 p-6 bg-gradient-to-r from-primary/10 via-emerald-500/10 to-blue-500/10 rounded-2xl border-2 border-primary/30">
+                    <p className="text-primary font-black text-center text-xl">
+                      🚀 導入が早いほど、長期的な削減効果が大きくなります！
                     </p>
                   </div>
                 </div>
@@ -1260,20 +1207,20 @@ export function SimulatorForm() {
           {/* 補助金の備考 */}
           <motion.div 
             {...fadeInUp}
-            className="bg-blue-50 border-2 border-blue-200 rounded-3xl p-6 md:p-8"
+            className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-3xl p-8 md:p-10 shadow-xl"
           >
-            <div className="flex flex-col md:flex-row items-start gap-4">
-              <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center shrink-0">
-                <Shield className="w-6 h-6 text-white" />
+            <div className="flex flex-col md:flex-row items-start gap-6">
+              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-blue-500/30">
+                <Shield className="w-8 h-8 text-white" />
               </div>
               <div>
-                <h4 className="font-bold text-gray-900 text-xl mb-3">自治体補助金でさらにお得に</h4>
-                <p className="text-gray-700 leading-relaxed mb-4">
+                <h4 className="font-black text-gray-900 text-2xl md:text-3xl mb-4">自治体補助金でさらにお得に</h4>
+                <p className="text-gray-700 leading-relaxed mb-5 text-lg font-medium">
                   各自治体が提供する蓄電池導入補助金を活用することで、初期投資をさらに削減できます。
                   補助金額は自治体によって異なりますが、数十万円〜100万円以上の補助が受けられる場合もあり、
                   投資回収期間をさらに短縮することが可能です。
                 </p>
-                <p className="text-xs text-gray-500">
+                <p className="text-sm text-gray-500 font-semibold">
                   ※ 補助金の詳細はお住まいの自治体にお問い合わせください
                 </p>
               </div>
@@ -1281,22 +1228,22 @@ export function SimulatorForm() {
           </motion.div>
 
           {/* 代理店募集 */}
-          <motion.div {...fadeInUp} id="agency" className="bg-white border border-gray-100 rounded-3xl p-8 md:p-12 shadow-lg shadow-gray-100/50">
-            <div className="text-center mb-12">
-              <div className="inline-flex items-center gap-2 bg-primary/10 rounded-full px-5 py-2 mb-6">
+          <motion.div {...fadeInUp} id="agency" className="bg-white border border-gray-100 rounded-3xl p-8 md:p-12 shadow-2xl shadow-gray-200/50">
+            <div className="text-center mb-14">
+              <div className="inline-flex items-center gap-2 bg-gradient-to-r from-primary/10 to-emerald-500/10 rounded-full px-6 py-3 mb-6">
                 <Users className="w-5 h-5 text-primary" />
-                <span className="text-sm font-semibold text-primary">販売代理店募集</span>
+                <span className="text-sm font-bold text-primary">販売代理店募集</span>
               </div>
-              <h3 className="text-3xl md:text-4xl font-black text-gray-900 mb-4">
+              <h3 className="text-4xl md:text-5xl font-black text-gray-900 mb-6">
                 一緒に日本の電気代削減を推進しませんか
               </h3>
-              <p className="text-gray-600 text-lg max-w-2xl mx-auto leading-relaxed">
+              <p className="text-gray-600 text-xl max-w-3xl mx-auto leading-relaxed font-medium">
                 ENELEAGE Zeroの販売代理店を募集しています。<br />
                 充実したサポート体制で、あなたのビジネスを支援します。
               </p>
             </div>
 
-            <div className="grid md:grid-cols-3 gap-6 mb-12">
+            <div className="grid md:grid-cols-3 gap-6 mb-14">
               {[
                 { num: '1', title: '高収益モデル', desc: '魅力的なマージン設定で安定した収益を実現' },
                 { num: '2', title: '充実サポート', desc: '営業ツール提供・研修・技術サポート完備' },
@@ -1304,14 +1251,14 @@ export function SimulatorForm() {
               ].map((item, i) => (
                 <motion.div 
                   key={i}
-                  whileHover={{ y: -4 }}
-                  className="text-center p-8 bg-gray-50 rounded-2xl border border-gray-200 transition-all"
+                  whileHover={{ y: -8, scale: 1.02 }}
+                  className="text-center p-10 bg-gradient-to-br from-gray-50 to-white rounded-3xl border border-gray-200 transition-all shadow-lg hover:shadow-2xl"
                 >
-                  <div className="w-16 h-16 bg-gradient-to-br from-primary to-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-primary/25">
-                    <span className="text-3xl font-black text-white">{item.num}</span>
+                  <div className="w-20 h-20 bg-gradient-to-br from-primary to-emerald-600 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-xl shadow-primary/30">
+                    <span className="text-4xl font-black text-white">{item.num}</span>
                   </div>
-                  <h4 className="font-bold text-gray-900 text-lg mb-3">{item.title}</h4>
-                  <p className="text-sm text-gray-600 leading-relaxed">
+                  <h4 className="font-black text-gray-900 text-xl mb-4">{item.title}</h4>
+                  <p className="text-sm text-gray-600 leading-relaxed font-medium">
                     {item.desc}
                   </p>
                 </motion.div>
@@ -1321,7 +1268,7 @@ export function SimulatorForm() {
             <div className="text-center">
               <Button
                 size="lg"
-                className="bg-gradient-to-r from-primary to-emerald-600 text-white hover:shadow-xl hover:shadow-primary/30 h-16 px-10 text-lg font-bold"
+                className="bg-gradient-to-r from-primary via-emerald-600 to-emerald-500 text-white hover:shadow-2xl hover:shadow-primary/40 h-18 px-12 text-xl font-black"
                 asChild
               >
                 <a
