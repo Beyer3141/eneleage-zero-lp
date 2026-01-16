@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Calculator, TrendingDown, Calendar, DollarSign, Mail, FileText, Users, CheckCircle2, XCircle, AlertCircle, TrendingUp } from 'lucide-react'
+import { Calculator, TrendingDown, Calendar, DollarSign, Mail, FileText, Users, CheckCircle2, AlertCircle } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Legend, Tooltip, Line, LineChart, ReferenceLine } from 'recharts'
 
 // ⭐️ ここを自分のURLに書き換えてください！
@@ -11,7 +11,8 @@ const POWER_PRICE_CSV_URL = 'https://docs.google.com/spreadsheets/d/1tPQZyeBHEE2
 
 // 製品情報
 const PRODUCT_PRICE = 3500000 // 定価: 350万円
-const TAX_RATE = 0.30 // 法人税率: 30%
+const CORPORATE_TAX_RATE = 0.30 // 法人税率: 30%
+const INDIVIDUAL_TAX_RATES = [0.10, 0.20, 0.30] // 個人事業主の所得税率
 const WARRANTY_YEARS = 15 // 保証期間: 15年
 
 interface AreaData {
@@ -26,10 +27,12 @@ interface MonthlyData {
   reducedCost: number
 }
 
-interface PaybackData {
-  year: number
-  cumulativeSavings: number
-  investment: number
+interface PaybackResult {
+  taxRate: number
+  taxSavings: number
+  actualInvestment: number
+  paybackYears: number
+  paybackWithinWarranty: boolean
 }
 
 interface SimulationResult {
@@ -39,13 +42,11 @@ interface SimulationResult {
   avgMonthlySavings: number
   annualSavings: number
   monthlyData: MonthlyData[]
-  // 投資回収計算
   productPrice: number
-  taxSavings: number
-  actualInvestment: number
-  paybackYears: number
-  paybackWithinWarranty: boolean
-  paybackData: PaybackData[]
+  corporate: PaybackResult
+  individual10: PaybackResult
+  individual20: PaybackResult
+  individual30: PaybackResult
 }
 
 export function SimulatorForm() {
@@ -63,6 +64,21 @@ export function SimulatorForm() {
     })
   }
 
+  const calculatePayback = (taxRate: number, annualSavings: number): PaybackResult => {
+    const taxSavings = Math.round(PRODUCT_PRICE * taxRate)
+    const actualInvestment = PRODUCT_PRICE - taxSavings
+    const paybackYears = parseFloat((actualInvestment / annualSavings).toFixed(1))
+    const paybackWithinWarranty = paybackYears <= WARRANTY_YEARS
+
+    return {
+      taxRate: taxRate * 100,
+      taxSavings,
+      actualInvestment,
+      paybackYears,
+      paybackWithinWarranty,
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -70,7 +86,6 @@ export function SimulatorForm() {
     setResult(null)
 
     try {
-      // 1. エリア別削減率データを取得
       const areaResponse = await fetch(AREA_REDUCTION_CSV_URL)
       const areaCsvText = await areaResponse.text()
       const areaRows = parseCSV(areaCsvText).slice(1)
@@ -86,7 +101,6 @@ export function SimulatorForm() {
         throw new Error('選択されたエリアのデータが見つかりません')
       }
 
-      // 2. 電力価格データを取得
       const priceResponse = await fetch(POWER_PRICE_CSV_URL)
       const priceCsvText = await priceResponse.text()
       const priceRows = parseCSV(priceCsvText)
@@ -98,18 +112,17 @@ export function SimulatorForm() {
         throw new Error('価格データのカラムが見つかりません')
       }
 
-      // 3. 月ごとの平均価格を計算
       const monthlyPrices: { [key: number]: number[] } = {}
       
       for (let i = 1; i < priceRows.length; i++) {
         const row = priceRows[i]
-        const dateStr = row[0] // 受渡日 (例: 2025/4/1)
+        const dateStr = row[0]
         const price = parseFloat(row[priceColumnIndex])
         
         if (dateStr && !isNaN(price)) {
           const dateParts = dateStr.split('/')
           if (dateParts.length >= 2) {
-            const month = parseInt(dateParts[1]) // 月を取得
+            const month = parseInt(dateParts[1])
             if (month >= 1 && month <= 12) {
               if (!monthlyPrices[month]) {
                 monthlyPrices[month] = []
@@ -120,7 +133,6 @@ export function SimulatorForm() {
         }
       }
 
-      // 4. 月ごとの平均価格を計算し、変動率を算出
       const monthlyAvgPrices: { [key: number]: number } = {}
       let totalAvgPrice = 0
       let monthCount = 0
@@ -137,7 +149,6 @@ export function SimulatorForm() {
       
       const overallAvgPrice = monthCount > 0 ? totalAvgPrice / monthCount : 1
 
-      // 5. ユーザー入力の電気代をベースに月別の電気代を計算
       const baselineCost = parseFloat(monthlyCost)
       const monthlyData: MonthlyData[] = []
       let totalCurrentCost = 0
@@ -146,15 +157,10 @@ export function SimulatorForm() {
       const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
 
       for (let month = 1; month <= 12; month++) {
-        // 月ごとの変動率を計算
         const monthAvgPrice = monthlyAvgPrices[month] || overallAvgPrice
         const variationRate = monthAvgPrice / overallAvgPrice
         
-        // ⭐️ 修正：削減前は固定（ユーザー入力値そのまま）
         const currentMonthCost = baselineCost
-        
-        // ⭐️ 修正：削減後はスポット価格の変動を反映
-        // 変動率を適用してから削減率を適用
         const reducedMonthCost = Math.round(baselineCost * variationRate * (1 - selectedAreaData.reductionRate / 100))
         
         monthlyData.push({
@@ -170,37 +176,23 @@ export function SimulatorForm() {
       const annualSavings = totalCurrentCost - totalReducedCost
       const avgMonthlySavings = Math.round(annualSavings / 12)
 
-      // 6. 投資回収計算
-      const taxSavings = Math.round(PRODUCT_PRICE * TAX_RATE)
-      const actualInvestment = PRODUCT_PRICE - taxSavings
-      const paybackYears = parseFloat((actualInvestment / annualSavings).toFixed(1))
-      const paybackWithinWarranty = paybackYears <= WARRANTY_YEARS
-
-      // 7. 投資回収グラフ用データを作成
-      const paybackData: PaybackData[] = []
-      const maxYears = Math.max(Math.ceil(paybackYears) + 5, 20) // 回収年+5年 or 20年
-      
-      for (let year = 0; year <= maxYears; year++) {
-        paybackData.push({
-          year: year,
-          cumulativeSavings: year * annualSavings,
-          investment: actualInvestment,
-        })
-      }
+      const corporate = calculatePayback(CORPORATE_TAX_RATE, annualSavings)
+      const individual10 = calculatePayback(INDIVIDUAL_TAX_RATES[0], annualSavings)
+      const individual20 = calculatePayback(INDIVIDUAL_TAX_RATES[1], annualSavings)
+      const individual30 = calculatePayback(INDIVIDUAL_TAX_RATES[2], annualSavings)
 
       setResult({
         area: selectedAreaData.area,
         baselineMonthlyCost: baselineCost,
         reductionRate: selectedAreaData.reductionRate,
-        avgMonthlySavings: avgMonthlySavings,
-        annualSavings: annualSavings,
-        monthlyData: monthlyData,
+        avgMonthlySavings,
+        annualSavings,
+        monthlyData,
         productPrice: PRODUCT_PRICE,
-        taxSavings: taxSavings,
-        actualInvestment: actualInvestment,
-        paybackYears: paybackYears,
-        paybackWithinWarranty: paybackWithinWarranty,
-        paybackData: paybackData,
+        corporate,
+        individual10,
+        individual20,
+        individual30,
       })
     } catch (err) {
       console.error('計算エラー:', err)
@@ -212,7 +204,6 @@ export function SimulatorForm() {
 
   return (
     <div className="space-y-8">
-      {/* 入力フォーム */}
       <div className="bg-card border border-border rounded-2xl p-8 shadow-sm">
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid md:grid-cols-2 gap-6">
@@ -285,10 +276,8 @@ export function SimulatorForm() {
         </form>
       </div>
 
-      {/* 結果表示 */}
       {result && (
         <div className="space-y-6">
-          {/* 月別電気代グラフセクション */}
           <div className="bg-card rounded-2xl border border-border p-6 md:p-10 shadow-sm">
             <div className="mb-6">
               <h3 className="text-2xl font-bold text-foreground mb-2">
@@ -365,7 +354,6 @@ export function SimulatorForm() {
             </div>
           </div>
 
-          {/* 削減効果サマリー */}
           <div className="bg-gradient-to-br from-primary via-primary to-emerald-600 rounded-2xl p-8 md:p-10 shadow-xl text-white">
             <div className="text-center mb-8">
               <div className="inline-flex items-center gap-2 bg-white/20 rounded-full px-4 py-2 mb-4">
@@ -408,7 +396,6 @@ export function SimulatorForm() {
               </div>
             </div>
 
-            {/* CTAボタン群 */}
             <div className="grid md:grid-cols-3 gap-4 pt-6 border-t border-white/20">
               <Button
                 size="lg"
@@ -456,11 +443,9 @@ export function SimulatorForm() {
             </div>
           </div>
 
-          {/* 🆕 投資回収シミュレーション */}
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-2xl p-6 md:p-10">
+          <div className="bg-card rounded-2xl border border-border p-6 md:p-10 shadow-sm">
             <div className="mb-6">
-              <h3 className="text-2xl font-bold text-foreground mb-2 flex items-center gap-2">
-                <TrendingUp className="w-6 h-6 text-blue-600" />
+              <h3 className="text-2xl font-bold text-foreground mb-2">
                 投資回収シミュレーション
               </h3>
               <p className="text-muted-foreground">
@@ -468,158 +453,103 @@ export function SimulatorForm() {
               </p>
             </div>
 
-            {/* 投資回収グラフ */}
-            <div className="bg-white rounded-xl p-6 mb-6 shadow-sm">
-              <div className="h-80 md:h-96">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={result.paybackData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis
-                      dataKey="year"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: "#9ca3af", fontSize: 12 }}
-                      label={{ value: '経過年数', position: 'insideBottom', offset: -5, fill: '#9ca3af' }}
-                    />
-                    <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: "#9ca3af", fontSize: 12 }}
-                      label={{ value: '累積金額(円)', angle: -90, position: 'insideLeft', fill: '#9ca3af' }}
-                      tickFormatter={(value) => `¥${(value / 10000).toFixed(0)}万`}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#fff',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
-                        padding: '8px 12px',
-                      }}
-                      formatter={(value: number) => `¥${value.toLocaleString()}`}
-                    />
-                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                    
-                    {/* 15年保証ライン */}
-                    <ReferenceLine 
-                      x={WARRANTY_YEARS} 
-                      stroke="#f59e0b" 
-                      strokeDasharray="5 5"
-                      label={{ value: '15年保証', position: 'top', fill: '#f59e0b', fontSize: 12 }}
-                    />
-                    
-                    {/* 実質投資額ライン（水平線） */}
-                    <Line
-                      type="monotone"
-                      dataKey="investment"
-                      name="実質投資額"
-                      stroke="#ef4444"
-                      strokeWidth={3}
-                      dot={false}
-                      strokeDasharray="10 5"
-                    />
-                    
-                    {/* 累積削減額ライン（上昇線） */}
-                    <Line
-                      type="monotone"
-                      dataKey="cumulativeSavings"
-                      name="累積削減額"
-                      stroke="#7CB342"
-                      strokeWidth={3}
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              
-              <div className="mt-4 text-xs text-muted-foreground text-center">
-                ※ 緑の線が赤の線を超えた時点で投資回収完了
-              </div>
-            </div>
-
-            {/* 投資回収詳細 */}
             <div className="grid md:grid-cols-2 gap-6">
-              {/* 左側：費用内訳 */}
-              <div className="bg-white rounded-xl p-6 shadow-sm">
-                <h4 className="font-semibold text-foreground mb-4">費用内訳</h4>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center pb-3 border-b border-border">
-                    <span className="text-sm text-muted-foreground">製品定価</span>
-                    <span className="text-lg font-semibold text-foreground">¥{result.productPrice.toLocaleString()}</span>
+              <div className="bg-muted/50 rounded-xl p-6 border border-border">
+                <h4 className="font-bold text-foreground mb-4 text-lg">法人の場合</h4>
+                <div className="space-y-3 mb-4">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">製品定価</span>
+                    <span className="font-semibold">¥{result.productPrice.toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between items-center pb-3 border-b border-blue-200 bg-blue-50 -mx-3 px-3 py-2 rounded-lg">
-                    <span className="text-sm font-medium text-blue-700">一括損金による節税額</span>
-                    <span className="text-lg font-bold text-blue-700">-¥{result.taxSavings.toLocaleString()}</span>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">法人税{result.corporate.taxRate}%</span>
+                    <span className="font-semibold text-primary">-¥{result.corporate.taxSavings.toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between items-center pt-2">
-                    <span className="text-base font-semibold text-foreground">実質投資額</span>
-                    <span className="text-2xl font-bold text-foreground">¥{result.actualInvestment.toLocaleString()}</span>
+                  <div className="flex justify-between text-sm border-t pt-2">
+                    <span className="font-medium">実質投資額</span>
+                    <span className="font-bold text-lg">¥{result.corporate.actualInvestment.toLocaleString()}</span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    ※ 法人税率30%で計算
-                  </p>
                 </div>
+
+                <div className="text-center py-4 bg-card rounded-lg mb-4">
+                  <p className="text-sm text-muted-foreground mb-1">投資回収期間</p>
+                  <p className="text-4xl font-black text-foreground mb-1">{result.corporate.paybackYears}</p>
+                  <p className="text-sm font-medium">年</p>
+                </div>
+
+                {result.corporate.paybackWithinWarranty ? (
+                  <div className="flex items-center justify-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                    <span className="text-sm font-medium text-emerald-700">15年保証内で回収</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                    <AlertCircle className="w-5 h-5 text-orange-600" />
+                    <span className="text-sm font-medium text-orange-700">15年保証を超過</span>
+                  </div>
+                )}
               </div>
 
-              {/* 右側：回収期間 */}
-              <div className="bg-white rounded-xl p-6 shadow-sm">
-                <h4 className="font-semibold text-foreground mb-4">投資回収期間</h4>
-                <div className="text-center mb-4">
-                  <p className="text-6xl font-black text-blue-600 mb-2">{result.paybackYears}</p>
-                  <p className="text-xl font-medium text-foreground">年</p>
-                </div>
+              <div className="bg-muted/50 rounded-xl p-6 border border-border">
+                <h4 className="font-bold text-foreground mb-4 text-lg">個人事業主の場合</h4>
                 
-                <div className={`flex items-center justify-center gap-2 p-4 rounded-lg ${
-                  result.paybackWithinWarranty 
-                    ? 'bg-emerald-50 border-2 border-emerald-200' 
-                    : 'bg-orange-50 border-2 border-orange-200'
-                }`}>
-                  {result.paybackWithinWarranty ? (
-                    <>
-                      <CheckCircle2 className="w-6 h-6 text-emerald-600" />
-                      <span className="text-sm font-semibold text-emerald-700">15年保証内で回収可能！</span>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="w-6 h-6 text-orange-600" />
-                      <span className="text-sm font-semibold text-orange-700">15年保証を超過</span>
-                    </>
-                  )}
+                <div className="space-y-4">
+                  {[
+                    { label: '所得税率 10%', data: result.individual10 },
+                    { label: '所得税率 20%', data: result.individual20 },
+                    { label: '所得税率 30%', data: result.individual30 },
+                  ].map((item, index) => (
+                    <div key={index} className="bg-card rounded-lg p-4">
+                      <p className="text-sm font-semibold text-foreground mb-2">{item.label}</p>
+                      <div className="grid grid-cols-3 gap-2 text-xs">
+                        <div>
+                          <p className="text-muted-foreground">節税額</p>
+                          <p className="font-semibold">¥{(item.data.taxSavings / 10000).toFixed(0)}万</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">実質投資</p>
+                          <p className="font-semibold">¥{(item.data.actualInvestment / 10000).toFixed(0)}万</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">回収期間</p>
+                          <p className="font-bold text-lg">{item.data.paybackYears}年</p>
+                        </div>
+                      </div>
+                      
+                      {item.data.paybackWithinWarranty && (
+                        <div className="mt-2 flex items-center gap-1 text-emerald-600">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span className="text-xs font-medium">15年以内</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
 
-                <div className="mt-4 p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
-                  <p className="font-medium text-foreground mb-1">計算式：</p>
-                  <p>¥{result.actualInvestment.toLocaleString()} ÷ ¥{result.annualSavings.toLocaleString()} = {result.paybackYears}年</p>
-                </div>
+                <p className="text-xs text-muted-foreground mt-4">
+                  ※ 所得税率は課税所得によって異なります
+                </p>
               </div>
             </div>
           </div>
 
-          {/* 補助金の備考 */}
-          <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-6">
+          <div className="bg-primary/5 border border-primary/20 rounded-xl p-6">
             <div className="flex items-start gap-3">
-              <AlertCircle className="w-6 h-6 text-blue-600 mt-0.5 shrink-0" />
+              <AlertCircle className="w-5 h-5 text-primary mt-0.5 shrink-0" />
               <div>
-                <h4 className="font-bold text-blue-900 mb-2 text-lg">💰 自治体補助金でさらにお得に！</h4>
-                <p className="text-sm text-blue-800 leading-relaxed mb-3">
+                <h4 className="font-semibold text-foreground mb-2">自治体補助金でさらにお得に</h4>
+                <p className="text-sm text-muted-foreground leading-relaxed">
                   各自治体が提供する蓄電池導入補助金を活用することで、初期投資をさらに削減できます。
-                  補助金額は自治体によって異なりますが、<span className="font-bold">数十万円〜100万円以上</span>の補助が受けられる場合もあり、
-                  <span className="font-bold text-lg">投資回収期間をさらに短縮</span>することが可能です。
+                  補助金額は自治体によって異なりますが、数十万円〜100万円以上の補助が受けられる場合もあり、
+                  投資回収期間をさらに短縮することが可能です。
                 </p>
-                <div className="bg-white/60 rounded-lg p-3 border border-blue-200">
-                  <p className="text-xs text-blue-900 font-medium">
-                    例：補助金50万円を受給した場合<br />
-                    実質投資額 ¥{(result.actualInvestment - 500000).toLocaleString()} ÷ 年間削減額 ¥{result.annualSavings.toLocaleString()} 
-                    = <span className="text-lg font-bold text-blue-600">{((result.actualInvestment - 500000) / result.annualSavings).toFixed(1)}年</span>で回収
-                  </p>
-                </div>
-                <p className="text-xs text-blue-700 mt-2">
+                <p className="text-xs text-muted-foreground mt-2">
                   ※ 補助金の詳細はお住まいの自治体にお問い合わせください
                 </p>
               </div>
             </div>
           </div>
 
-          {/* 代理店募集セクション */}
           <div id="agency" className="bg-card border border-border rounded-2xl p-8 md:p-10 shadow-sm">
             <div className="text-center mb-8">
               <div className="inline-flex items-center gap-2 bg-primary/10 rounded-full px-4 py-2 mb-4">
