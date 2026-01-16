@@ -397,7 +397,6 @@ export function SimulatorForm() {
               >
                 <option value="corporateSmall800">中小法人（資本金1億円以下・所得800万円以下）税率15%</option>
                 <option value="corporateSmall800Plus">中小法人（資本金1億円以下・所得800万円超）税率23.2%</option>
-                <option value="corporateLarge">大法人（資本金1億円超）税率23.2%</option>
               </select>
             </div>
           )}
