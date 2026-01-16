@@ -5,15 +5,28 @@ import { Button } from '@/components/ui/button'
 import { Calculator, TrendingDown, Calendar, DollarSign, Mail, FileText, Users, CheckCircle2, AlertCircle } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Legend, Tooltip, Line, LineChart, ReferenceLine } from 'recharts'
 
-// ⭐️ ここを自分のURLに書き換えてください！
 const AREA_REDUCTION_CSV_URL = 'https://docs.google.com/spreadsheets/d/1CutW05rwWNn2IDKPa7QK9q5m_A59lu1lwO1hJ-4GCHU/export?format=csv&gid=184100076'
 const POWER_PRICE_CSV_URL = 'https://docs.google.com/spreadsheets/d/1tPQZyeBHEE2Fh2nY5MBBMjUIF30YQTYxi3n2o36Ikyo/export?format=csv&gid=0'
 
-// 製品情報
-const PRODUCT_PRICE = 3500000 // 定価: 350万円
-const CORPORATE_TAX_RATE = 0.30 // 法人税率: 30%
-const INDIVIDUAL_TAX_RATES = [0.10, 0.20, 0.30] // 個人事業主の所得税率
-const WARRANTY_YEARS = 15 // 保証期間: 15年
+const PRODUCT_PRICE = 3500000
+const WARRANTY_YEARS = 15
+
+// 税率設定
+const TAX_RATES = {
+  individual: 0, // 個人は一括償却なし
+  soloProprietor: {
+    5: 0.05,
+    10: 0.10,
+    20: 0.20,
+    23: 0.23,
+    33: 0.33,
+    40: 0.40,
+    45: 0.45,
+  },
+  corporateSmall800: 0.15, // 中小法人800万以下
+  corporateSmall800Plus: 0.232, // 中小法人800万超
+  corporateLarge: 0.232, // 大法人
+}
 
 interface AreaData {
   area: string
@@ -27,12 +40,10 @@ interface MonthlyData {
   reducedCost: number
 }
 
-interface PaybackResult {
-  taxRate: number
-  taxSavings: number
-  actualInvestment: number
-  paybackYears: number
-  paybackWithinWarranty: boolean
+interface PaybackData {
+  year: number
+  cumulativeSavings: number
+  investment: number
 }
 
 interface SimulationResult {
@@ -42,16 +53,21 @@ interface SimulationResult {
   avgMonthlySavings: number
   annualSavings: number
   monthlyData: MonthlyData[]
+  // 投資回収
   productPrice: number
-  corporate: PaybackResult
-  individual10: PaybackResult
-  individual20: PaybackResult
-  individual30: PaybackResult
+  taxRate: number
+  taxSavings: number
+  actualInvestment: number
+  paybackYears: number
+  paybackWithinWarranty: boolean
+  paybackData: PaybackData[]
 }
 
 export function SimulatorForm() {
   const [area, setArea] = useState<string>('')
   const [monthlyCost, setMonthlyCost] = useState<string>('')
+  const [businessType, setBusinessType] = useState<'individual' | 'soloProprietor' | 'corporate'>('corporate')
+  const [taxCondition, setTaxCondition] = useState<string>('corporateSmall800')
   const [result, setResult] = useState<SimulationResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -64,19 +80,36 @@ export function SimulatorForm() {
     })
   }
 
-  const calculatePayback = (taxRate: number, annualSavings: number): PaybackResult => {
-    const taxSavings = Math.round(PRODUCT_PRICE * taxRate)
-    const actualInvestment = PRODUCT_PRICE - taxSavings
-    const paybackYears = parseFloat((actualInvestment / annualSavings).toFixed(1))
-    const paybackWithinWarranty = paybackYears <= WARRANTY_YEARS
-
-    return {
-      taxRate: taxRate * 100,
-      taxSavings,
-      actualInvestment,
-      paybackYears,
-      paybackWithinWarranty,
+  const getTaxRate = (): number => {
+    if (businessType === 'individual') return TAX_RATES.individual
+    if (businessType === 'soloProprietor') {
+      const rate = parseInt(taxCondition)
+      return TAX_RATES.soloProprietor[rate as keyof typeof TAX_RATES.soloProprietor] || 0
     }
+    if (businessType === 'corporate') {
+      if (taxCondition === 'corporateSmall800') return TAX_RATES.corporateSmall800
+      if (taxCondition === 'corporateSmall800Plus') return TAX_RATES.corporateSmall800Plus
+      if (taxCondition === 'corporateLarge') return TAX_RATES.corporateLarge
+    }
+    return 0
+  }
+
+  const getBusinessTypeName = (): string => {
+    if (businessType === 'individual') return '個人'
+    if (businessType === 'soloProprietor') return '個人事業主'
+    if (businessType === 'corporate') return '法人'
+    return ''
+  }
+
+  const getTaxConditionName = (): string => {
+    if (businessType === 'individual') return '一括償却なし'
+    if (businessType === 'soloProprietor') return `所得税率 ${taxCondition}%`
+    if (businessType === 'corporate') {
+      if (taxCondition === 'corporateSmall800') return '中小法人（所得800万以下）税率15%'
+      if (taxCondition === 'corporateSmall800Plus') return '中小法人（所得800万超）税率23.2%'
+      if (taxCondition === 'corporateLarge') return '大法人 税率23.2%'
+    }
+    return ''
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -176,10 +209,24 @@ export function SimulatorForm() {
       const annualSavings = totalCurrentCost - totalReducedCost
       const avgMonthlySavings = Math.round(annualSavings / 12)
 
-      const corporate = calculatePayback(CORPORATE_TAX_RATE, annualSavings)
-      const individual10 = calculatePayback(INDIVIDUAL_TAX_RATES[0], annualSavings)
-      const individual20 = calculatePayback(INDIVIDUAL_TAX_RATES[1], annualSavings)
-      const individual30 = calculatePayback(INDIVIDUAL_TAX_RATES[2], annualSavings)
+      // 投資回収計算
+      const taxRate = getTaxRate()
+      const taxSavings = Math.round(PRODUCT_PRICE * taxRate)
+      const actualInvestment = PRODUCT_PRICE - taxSavings
+      const paybackYears = annualSavings > 0 ? parseFloat((actualInvestment / annualSavings).toFixed(1)) : 999
+      const paybackWithinWarranty = paybackYears <= WARRANTY_YEARS
+
+      // グラフデータ
+      const maxYears = Math.max(Math.ceil(paybackYears) + 5, 20)
+      const paybackData: PaybackData[] = []
+      
+      for (let year = 0; year <= maxYears; year++) {
+        paybackData.push({
+          year: year,
+          cumulativeSavings: year * annualSavings,
+          investment: actualInvestment,
+        })
+      }
 
       setResult({
         area: selectedAreaData.area,
@@ -189,10 +236,12 @@ export function SimulatorForm() {
         annualSavings,
         monthlyData,
         productPrice: PRODUCT_PRICE,
-        corporate,
-        individual10,
-        individual20,
-        individual30,
+        taxRate: taxRate * 100,
+        taxSavings,
+        actualInvestment,
+        paybackYears,
+        paybackWithinWarranty,
+        paybackData,
       })
     } catch (err) {
       console.error('計算エラー:', err)
@@ -204,6 +253,7 @@ export function SimulatorForm() {
 
   return (
     <div className="space-y-8">
+      {/* 入力フォーム */}
       <div className="bg-card border border-border rounded-2xl p-8 shadow-sm">
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid md:grid-cols-2 gap-6">
@@ -254,6 +304,104 @@ export function SimulatorForm() {
             </div>
           </div>
 
+          {/* 事業形態選択 */}
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">
+              事業形態
+            </label>
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setBusinessType('individual')
+                  setTaxCondition('0')
+                }}
+                className={`px-4 py-3 rounded-xl border-2 font-medium transition-all ${
+                  businessType === 'individual'
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-background text-foreground hover:border-primary/50'
+                }`}
+              >
+                個人
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBusinessType('soloProprietor')
+                  setTaxCondition('20')
+                }}
+                className={`px-4 py-3 rounded-xl border-2 font-medium transition-all ${
+                  businessType === 'soloProprietor'
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-background text-foreground hover:border-primary/50'
+                }`}
+              >
+                個人事業主
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBusinessType('corporate')
+                  setTaxCondition('corporateSmall800')
+                }}
+                className={`px-4 py-3 rounded-xl border-2 font-medium transition-all ${
+                  businessType === 'corporate'
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-background text-foreground hover:border-primary/50'
+                }`}
+              >
+                法人
+              </button>
+            </div>
+          </div>
+
+          {/* 条件選択（事業形態によって動的に変わる） */}
+          {businessType === 'individual' && (
+            <div className="p-4 bg-muted/50 rounded-xl">
+              <p className="text-sm text-muted-foreground">
+                個人の場合、一括損金計上はできないため節税効果はありません。
+              </p>
+            </div>
+          )}
+
+          {businessType === 'soloProprietor' && (
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">
+                所得税率（課税所得に応じて選択）
+              </label>
+              <select
+                value={taxCondition}
+                onChange={(e) => setTaxCondition(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-border bg-background text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+              >
+                <option value="5">5% （課税所得195万円以下）</option>
+                <option value="10">10% （課税所得195万円超〜330万円以下）</option>
+                <option value="20">20% （課税所得330万円超〜695万円以下）</option>
+                <option value="23">23% （課税所得695万円超〜900万円以下）</option>
+                <option value="33">33% （課税所得900万円超〜1,800万円以下）</option>
+                <option value="40">40% （課税所得1,800万円超〜4,000万円以下）</option>
+                <option value="45">45% （課税所得4,000万円超）</option>
+              </select>
+            </div>
+          )}
+
+          {businessType === 'corporate' && (
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">
+                法人規模・所得区分
+              </label>
+              <select
+                value={taxCondition}
+                onChange={(e) => setTaxCondition(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-border bg-background text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+              >
+                <option value="corporateSmall800">中小法人（資本金1億円以下・所得800万円以下）税率15%</option>
+                <option value="corporateSmall800Plus">中小法人（資本金1億円以下・所得800万円超）税率23.2%</option>
+                <option value="corporateLarge">大法人（資本金1億円超）税率23.2%</option>
+              </select>
+            </div>
+          )}
+
           {error && (
             <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm">
               {error}
@@ -276,8 +424,10 @@ export function SimulatorForm() {
         </form>
       </div>
 
+      {/* 結果表示 */}
       {result && (
         <div className="space-y-6">
+          {/* 月別電気代グラフ */}
           <div className="bg-card rounded-2xl border border-border p-6 md:p-10 shadow-sm">
             <div className="mb-6">
               <h3 className="text-2xl font-bold text-foreground mb-2">
@@ -354,6 +504,7 @@ export function SimulatorForm() {
             </div>
           </div>
 
+          {/* 削減効果サマリー */}
           <div className="bg-gradient-to-br from-primary via-primary to-emerald-600 rounded-2xl p-8 md:p-10 shadow-xl text-white">
             <div className="text-center mb-8">
               <div className="inline-flex items-center gap-2 bg-white/20 rounded-full px-4 py-2 mb-4">
@@ -443,41 +594,126 @@ export function SimulatorForm() {
             </div>
           </div>
 
+          {/* 投資回収シミュレーション */}
           <div className="bg-card rounded-2xl border border-border p-6 md:p-10 shadow-sm">
             <div className="mb-6">
               <h3 className="text-2xl font-bold text-foreground mb-2">
                 投資回収シミュレーション
               </h3>
               <p className="text-muted-foreground">
-                一括損金計上による節税効果を含めた実質投資回収期間
+                {getBusinessTypeName()}（{getTaxConditionName()}）の場合
               </p>
             </div>
 
+            {/* 投資回収グラフ */}
+            <div className="bg-muted/30 rounded-xl p-6 mb-6">
+              <div className="h-80 md:h-96">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={result.paybackData} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis
+                      dataKey="year"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: "#9ca3af", fontSize: 12 }}
+                      label={{ value: '経過年数', position: 'insideBottom', offset: -5, fill: '#9ca3af' }}
+                    />
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: "#9ca3af", fontSize: 12 }}
+                      label={{ value: '累積金額(円)', angle: -90, position: 'insideLeft', fill: '#9ca3af' }}
+                      tickFormatter={(value) => `¥${(value / 10000).toFixed(0)}万`}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#fff',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        padding: '8px 12px',
+                      }}
+                      formatter={(value: number) => `¥${value.toLocaleString()}`}
+                    />
+                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                    
+                    <ReferenceLine 
+                      x={WARRANTY_YEARS} 
+                      stroke="#f59e0b" 
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      label={{ 
+                        value: '15年保証', 
+                        position: 'top',
+                        fill: '#f59e0b', 
+                        fontSize: 11
+                      }}
+                    />
+                    
+                    <Line
+                      type="monotone"
+                      dataKey="investment"
+                      name="実質投資額"
+                      stroke="#ef4444"
+                      strokeWidth={3}
+                      dot={false}
+                      strokeDasharray="10 5"
+                    />
+                    
+                    <Line
+                      type="monotone"
+                      dataKey="cumulativeSavings"
+                      name="累積削減額"
+                      stroke="#7CB342"
+                      strokeWidth={3}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              
+              <div className="mt-4 text-xs text-muted-foreground text-center">
+                ※ 緑の線が赤の線を超えた時点で投資回収完了
+              </div>
+            </div>
+
+            {/* 投資回収詳細 */}
             <div className="grid md:grid-cols-2 gap-6">
               <div className="bg-muted/50 rounded-xl p-6 border border-border">
-                <h4 className="font-bold text-foreground mb-4 text-lg">法人の場合</h4>
+                <h4 className="font-bold text-foreground mb-4 text-lg">費用内訳</h4>
                 <div className="space-y-3 mb-4">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">製品定価</span>
                     <span className="font-semibold">¥{result.productPrice.toLocaleString()}</span>
                   </div>
+                  {businessType !== 'individual' && (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">税率</span>
+                        <span className="font-semibold">{result.taxRate}%</span>
+                      </div>
+                      <div className="flex justify-between text-sm border-t pt-2">
+                        <span className="text-muted-foreground">節税額</span>
+                        <span className="font-semibold text-primary">¥{result.taxSavings.toLocaleString()}</span>
+                      </div>
+                    </>
+                  )}
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">法人税{result.corporate.taxRate}%</span>
-                    <span className="font-semibold text-primary">-¥{result.corporate.taxSavings.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-sm border-t pt-2">
                     <span className="font-medium">実質投資額</span>
-                    <span className="font-bold text-lg">¥{result.corporate.actualInvestment.toLocaleString()}</span>
+                    <span className="font-bold text-lg">¥{result.actualInvestment.toLocaleString()}</span>
                   </div>
                 </div>
+              </div>
 
+              <div className="bg-muted/50 rounded-xl p-6 border border-border">
+                <h4 className="font-bold text-foreground mb-4 text-lg">投資回収期間</h4>
+                
                 <div className="text-center py-4 bg-card rounded-lg mb-4">
                   <p className="text-sm text-muted-foreground mb-1">投資回収期間</p>
-                  <p className="text-4xl font-black text-foreground mb-1">{result.corporate.paybackYears}</p>
+                  <p className="text-4xl font-black text-foreground mb-1">{result.paybackYears}</p>
                   <p className="text-sm font-medium">年</p>
                 </div>
 
-                {result.corporate.paybackWithinWarranty ? (
+                {result.paybackWithinWarranty ? (
                   <div className="flex items-center justify-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
                     <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                     <span className="text-sm font-medium text-emerald-700">15年保証内で回収</span>
@@ -488,51 +724,16 @@ export function SimulatorForm() {
                     <span className="text-sm font-medium text-orange-700">15年保証を超過</span>
                   </div>
                 )}
-              </div>
 
-              <div className="bg-muted/50 rounded-xl p-6 border border-border">
-                <h4 className="font-bold text-foreground mb-4 text-lg">個人事業主の場合</h4>
-                
-                <div className="space-y-4">
-                  {[
-                    { label: '所得税率 10%', data: result.individual10 },
-                    { label: '所得税率 20%', data: result.individual20 },
-                    { label: '所得税率 30%', data: result.individual30 },
-                  ].map((item, index) => (
-                    <div key={index} className="bg-card rounded-lg p-4">
-                      <p className="text-sm font-semibold text-foreground mb-2">{item.label}</p>
-                      <div className="grid grid-cols-3 gap-2 text-xs">
-                        <div>
-                          <p className="text-muted-foreground">節税額</p>
-                          <p className="font-semibold">¥{(item.data.taxSavings / 10000).toFixed(0)}万</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">実質投資</p>
-                          <p className="font-semibold">¥{(item.data.actualInvestment / 10000).toFixed(0)}万</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">回収期間</p>
-                          <p className="font-bold text-lg">{item.data.paybackYears}年</p>
-                        </div>
-                      </div>
-                      
-                      {item.data.paybackWithinWarranty && (
-                        <div className="mt-2 flex items-center gap-1 text-emerald-600">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span className="text-xs font-medium">15年以内</span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                <div className="mt-4 p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground mb-1">計算式：</p>
+                  <p>¥{result.actualInvestment.toLocaleString()} ÷ ¥{result.annualSavings.toLocaleString()} = {result.paybackYears}年</p>
                 </div>
-
-                <p className="text-xs text-muted-foreground mt-4">
-                  ※ 所得税率は課税所得によって異なります
-                </p>
               </div>
             </div>
           </div>
 
+          {/* 補助金の備考 */}
           <div className="bg-primary/5 border border-primary/20 rounded-xl p-6">
             <div className="flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-primary mt-0.5 shrink-0" />
@@ -550,6 +751,7 @@ export function SimulatorForm() {
             </div>
           </div>
 
+          {/* 代理店募集 */}
           <div id="agency" className="bg-card border border-border rounded-2xl p-8 md:p-10 shadow-sm">
             <div className="text-center mb-8">
               <div className="inline-flex items-center gap-2 bg-primary/10 rounded-full px-4 py-2 mb-4">
