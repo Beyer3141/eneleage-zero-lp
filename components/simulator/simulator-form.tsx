@@ -12,15 +12,6 @@ const POWER_PRICE_CSV_URL = 'https://docs.google.com/spreadsheets/d/1tPQZyeBHEE2
 const PRODUCT_PRICE = 3500000
 const WARRANTY_YEARS = 15
 
-// 蓄電池仕様
-const BATTERY_SPEC = {
-  capacity: 10.294, // kWh（使用可能容量）
-  cyclesPerDay: 4, // 1日のサイクル数（デフォルト）
-  get dailyCapacity() {
-    return this.capacity * this.cyclesPerDay // 41.176kWh/日
-  }
-}
-
 const TAX_RATES = {
   individual: 0,
   soloProprietor: {
@@ -193,8 +184,6 @@ export function SimulatorForm() {
         throw new Error('価格データのカラムが見つかりません')
       }
 
-      // 価格データ収集
-      const allPrices: number[] = []
       const monthlyPrices: { [key: number]: number[] } = {}
       
       for (let i = 1; i < priceRows.length; i++) {
@@ -203,8 +192,6 @@ export function SimulatorForm() {
         const price = parseFloat(row[priceColumnIndex])
         
         if (dateStr && !isNaN(price)) {
-          allPrices.push(price)
-          
           const dateParts = dateStr.split('/')
           if (dateParts.length >= 2) {
             const month = parseInt(dateParts[1])
@@ -218,47 +205,6 @@ export function SimulatorForm() {
         }
       }
 
-      // 価格統計（高い時間・安い時間の判定）
-      const sortedPrices = [...allPrices].sort((a, b) => a - b)
-      const avgPrice = allPrices.reduce((a, b) => a + b, 0) / allPrices.length
-      
-      // 上位30%を高い時間、下位70%を安い時間とする
-      const highThreshold = sortedPrices[Math.floor(sortedPrices.length * 0.7)]
-      const highPrices = allPrices.filter(p => p >= highThreshold)
-      const lowPrices = allPrices.filter(p => p < highThreshold)
-      
-      const avgHighPrice = highPrices.reduce((a, b) => a + b, 0) / highPrices.length
-      const avgLowPrice = lowPrices.reduce((a, b) => a + b, 0) / lowPrices.length
-      const priceGap = avgHighPrice - avgLowPrice
-
-      // 使用量推定
-      const baselineCost = parseFloat(monthlyCost)
-      const VARIABLE_COST_RATIO = 0.75 // 従量料金が75%と仮定
-      const variableCost = baselineCost * VARIABLE_COST_RATIO
-      const estimatedDailyUsage = (variableCost / avgPrice / 30)
-      
-      // 高い時間の使用量（リビングタイム70%）
-      const HIGH_TIME_RATIO = 0.7
-      const highTimeUsage = estimatedDailyUsage * HIGH_TIME_RATIO
-
-      // 蓄電池による削減額（価格差ベース）
-      const storageCapacity = Math.min(BATTERY_SPEC.dailyCapacity, highTimeUsage)
-      const dailyReduction = priceGap * storageCapacity
-      const monthlyReductionAmount = dailyReduction * 30
-      
-      // 削減率を逆算（UIとの互換性のため）
-      const calculatedReductionRate = (monthlyReductionAmount / baselineCost) * 100
-
-      console.log('🔍 計算パラメータ:')
-      console.log(`  月額: ${baselineCost.toLocaleString()}円`)
-      console.log(`  推定使用量: ${estimatedDailyUsage.toFixed(1)}kWh/日`)
-      console.log(`  高い時間の使用: ${highTimeUsage.toFixed(1)}kWh/日`)
-      console.log(`  蓄電池容量: ${BATTERY_SPEC.dailyCapacity.toFixed(1)}kWh/日`)
-      console.log(`  実効カバー: ${storageCapacity.toFixed(1)}kWh/日`)
-      console.log(`  価格差: ${priceGap.toFixed(2)}円/kWh`)
-      console.log(`  計算削減率: ${calculatedReductionRate.toFixed(1)}%`)
-
-      // 月別データ（価格差ベースで再計算）
       const monthlyAvgPrices: { [key: number]: number } = {}
       let totalAvgPrice = 0
       let monthCount = 0
@@ -275,6 +221,7 @@ export function SimulatorForm() {
       
       const overallAvgPrice = monthCount > 0 ? totalAvgPrice / monthCount : 1
 
+      const baselineCost = parseFloat(monthlyCost)
       const monthlyData: MonthlyData[] = []
       let totalCurrentCost = 0
       let totalReducedCost = 0
@@ -286,8 +233,7 @@ export function SimulatorForm() {
         const variationRate = monthAvgPrice / overallAvgPrice
         
         const currentMonthCost = baselineCost
-        // 価格差ベースの削減率を使用
-        const reducedMonthCost = Math.round(baselineCost * variationRate * (1 - calculatedReductionRate / 100))
+        const reducedMonthCost = Math.round(baselineCost * variationRate * (1 - selectedAreaData.reductionRate / 100))
         
         monthlyData.push({
           month: monthNames[month - 1],
@@ -387,7 +333,7 @@ export function SimulatorForm() {
       setResult({
         area: selectedAreaData.area,
         baselineMonthlyCost: baselineCost,
-        reductionRate: calculatedReductionRate, // 価格差ベースで計算した削減率
+        reductionRate: selectedAreaData.reductionRate,
         avgMonthlySavings,
         annualSavings,
         monthlyData,
@@ -442,14 +388,14 @@ export function SimulatorForm() {
         
         <div className="relative z-10">
           <div className="text-center mb-6 md:mb-10">
-            <div className="inline-flex items-center gap-1.5 md:gap-2 bg-gradient-to-r from-primary to-emerald-600 text-white rounded-full px-4 md:px-6 py-2 md:py-2.5 mb-3 md:mb-4 shadow-lg shadow-primary/30">
-              <Sparkles className="w-3 md:w-4 h-3 md:h-4" />
-              <span className="text-xs md:text-sm font-black">無料診断</span>
+            <div className="inline-flex items-center gap-1.5 md:gap-2 bg-gradient-to-r from-primary/10 to-emerald-500/10 rounded-full px-3 md:px-5 py-1.5 md:py-2 mb-2 md:mb-4">
+              <Sparkles className="w-3 md:w-4 h-3 md:h-4 text-primary" />
+              <span className="text-xs md:text-sm font-bold text-primary">無料診断</span>
             </div>
-            <h2 className="text-lg md:text-4xl font-black text-gray-900 mb-2 md:mb-4 leading-tight bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
+            <h2 className="text-lg md:text-4xl font-black text-gray-900 mb-2 md:mb-4 leading-tight">
               電気代削減額を診断
             </h2>
-            <p className="text-sm md:text-lg text-gray-600 font-medium">
+            <p className="text-sm md:text-lg text-gray-600">
               エリアと月額電気代を入力
             </p>
           </div>
@@ -707,23 +653,22 @@ export function SimulatorForm() {
             
             <div className="relative z-10">
               <div className="text-center mb-8 md:mb-12">
-                <div className="inline-flex items-center gap-1.5 md:gap-2 bg-white/25 backdrop-blur-md rounded-full px-5 md:px-7 py-2.5 md:py-3.5 mb-4 md:mb-6 shadow-xl">
-                  <TrendingDown className="w-5 md:w-6 h-5 md:h-6" />
-                  <span className="text-sm md:text-base font-black">年間削減効果</span>
+                <div className="inline-flex items-center gap-1.5 md:gap-2 bg-white/20 backdrop-blur-sm rounded-full px-4 md:px-6 py-2 md:py-3 mb-3 md:mb-6">
+                  <TrendingDown className="w-4 md:w-5 h-4 md:h-5" />
+                  <span className="text-xs md:text-sm font-bold">年間削減効果</span>
                 </div>
-                <h2 className="text-4xl md:text-7xl font-black mb-3 md:mb-5 drop-shadow-lg">
-                  削減率 {result.reductionRate.toFixed(1)}%
+                <h2 className="text-3xl md:text-6xl font-black mb-2 md:mb-4">
+                  削減率 {result.reductionRate}%
                 </h2>
-                <p className="text-sm md:text-xl text-white/95 font-bold">
+                <p className="text-sm md:text-xl text-white/90 font-medium">
                   AI-EMSによるスポット価格最適化
                 </p>
               </div>
 
               <div className="grid md:grid-cols-2 gap-4 md:gap-6 mb-6 md:mb-12">
                 <motion.div 
-                  whileHover={{ scale: 1.03, y: -4 }}
-                  transition={{ duration: 0.2 }}
-                  className="bg-white/20 backdrop-blur-md rounded-2xl md:rounded-3xl p-6 md:p-8 border-2 border-white/40 shadow-2xl hover:shadow-3xl"
+                  whileHover={{ scale: 1.03 }}
+                  className="bg-white/15 backdrop-blur-sm rounded-2xl md:rounded-3xl p-5 md:p-8 border-2 border-white/30 shadow-xl"
                 >
                   <div className="flex items-center gap-2 md:gap-3 mb-4 md:mb-6">
                     <div className="w-10 md:w-14 h-10 md:h-14 bg-white/20 rounded-xl md:rounded-2xl flex items-center justify-center">
@@ -740,9 +685,8 @@ export function SimulatorForm() {
                 </motion.div>
 
                 <motion.div 
-                  whileHover={{ scale: 1.03, y: -4 }}
-                  transition={{ duration: 0.2 }}
-                  className="bg-white/20 backdrop-blur-md rounded-2xl md:rounded-3xl p-6 md:p-8 border-2 border-white/40 shadow-2xl hover:shadow-3xl"
+                  whileHover={{ scale: 1.03 }}
+                  className="bg-white/15 backdrop-blur-sm rounded-2xl md:rounded-3xl p-5 md:p-8 border-2 border-white/30 shadow-xl"
                 >
                   <div className="flex items-center gap-2 md:gap-3 mb-4 md:mb-6">
                     <div className="w-10 md:w-14 h-10 md:h-14 bg-white/20 rounded-xl md:rounded-2xl flex items-center justify-center">
