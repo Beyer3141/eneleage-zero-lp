@@ -1,17 +1,17 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
-import { Calculator, TrendingDown, Calendar, DollarSign, Mail, FileText, Users, CheckCircle2, AlertCircle, TrendingUp, Info, Zap, Shield, Sparkles, ChevronDown, ChevronUp, Battery, BatteryCharging, Gauge, Target, Award, ArrowRight, CircleDot } from 'lucide-react'
+import { Calculator, TrendingDown, Calendar, DollarSign, Mail, FileText, Users, CheckCircle2, AlertCircle, TrendingUp, Info, Zap, Shield, Sparkles, ChevronDown, ChevronUp, Battery, BatteryCharging, Gauge, Target, Award, ArrowRight, CircleDot, PartyPopper, Rocket } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Legend, Tooltip, Line, LineChart, ReferenceLine } from 'recharts'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useSpring, useTransform, useInView } from 'framer-motion'
 
 const AREA_REDUCTION_CSV_URL = 'https://docs.google.com/spreadsheets/d/1CutW05rwWNn2IDKPa7QK9q5m_A59lu1lwO1hJ-4GCHU/export?format=csv&gid=184100076'
 const POWER_PRICE_CSV_URL = 'https://docs.google.com/spreadsheets/d/1tPQZyeBHEE2Fh2nY5MBBMjUIF30YQTYxi3n2o36Ikyo/export?format=csv&gid=0'
 
 const PRODUCT_PRICE_PER_UNIT = 3500000
 const INSTALLATION_COST_PER_UNIT = 200000
-const WARRANTY_YEARS = 15
+const WARRANTY_YEARS = 16
 const DEPRECIATION_YEARS = 6
 
 const INSTALLATION_DISCOUNTS = {
@@ -44,9 +44,9 @@ const TAX_RATES = {
 }
 
 const PRICE_SCENARIOS = {
-  noChange: { rate: 0, name: '現状維持', shortName: '0%', color: '#6b7280', bgColor: 'bg-slate-50', borderColor: 'border-slate-300', textColor: 'text-slate-700', gradientFrom: 'from-slate-400', gradientTo: 'to-slate-600' },
-  standard: { rate: 0.03, name: '標準シナリオ', shortName: '3%', color: '#10b981', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-400', textColor: 'text-emerald-700', gradientFrom: 'from-emerald-400', gradientTo: 'to-teal-600' },
-  worst: { rate: 0.05, name: '悪化シナリオ', shortName: '5%', color: '#f59e0b', bgColor: 'bg-amber-50', borderColor: 'border-amber-400', textColor: 'text-amber-700', gradientFrom: 'from-amber-400', gradientTo: 'to-orange-600' },
+  noChange: { rate: 0, name: '現状維持', shortName: '0%', color: '#64748b', bgColor: 'bg-slate-50', borderColor: 'border-slate-200', textColor: 'text-slate-700', lightBg: 'bg-slate-100' },
+  standard: { rate: 0.03, name: '標準シナリオ', shortName: '3%', color: '#10b981', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200', textColor: 'text-emerald-700', lightBg: 'bg-emerald-100' },
+  worst: { rate: 0.05, name: '悪化シナリオ', shortName: '5%', color: '#f59e0b', bgColor: 'bg-amber-50', borderColor: 'border-amber-200', textColor: 'text-amber-700', lightBg: 'bg-amber-100' },
 }
 
 type ScenarioKey = keyof typeof PRICE_SCENARIOS
@@ -92,8 +92,12 @@ interface MultiUnitAnalysis {
   actualInvestment: number
   annualReduction: number
   coverageRate: number
+  paybackNoChange: number
   paybackStandard: number
-  roi15Years: number
+  paybackWorst: number
+  roi16YearsNoChange: number
+  roi16YearsStandard: number
+  roi16YearsWorst: number
 }
 
 interface SimulationResult {
@@ -122,32 +126,191 @@ interface SimulationResult {
   highTimeUsage: number
 }
 
-const fadeInUp = {
-  initial: { opacity: 0, y: 30 },
-  animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] }
-}
-
-const staggerChildren = {
-  animate: {
-    transition: {
-      staggerChildren: 0.1
+// カウントアップアニメーションコンポーネント
+function AnimatedNumber({ value, prefix = '', suffix = '', duration = 1.5, decimals = 0 }: { 
+  value: number
+  prefix?: string
+  suffix?: string
+  duration?: number
+  decimals?: number
+}) {
+  const ref = useRef(null)
+  const isInView = useInView(ref, { once: true, margin: "-50px" })
+  const spring = useSpring(0, { duration: duration * 1000 })
+  const display = useTransform(spring, (current) => {
+    if (decimals > 0) {
+      return `${prefix}${current.toFixed(decimals)}${suffix}`
     }
+    return `${prefix}${Math.round(current).toLocaleString()}${suffix}`
+  })
+
+  useEffect(() => {
+    if (isInView) {
+      spring.set(value)
+    }
+  }, [isInView, spring, value])
+
+  return <motion.span ref={ref}>{display}</motion.span>
+}
+
+// プログレスリングコンポーネント
+function ProgressRing({ progress, size = 80, strokeWidth = 8, color = '#10b981' }: {
+  progress: number
+  size?: number
+  strokeWidth?: number
+  color?: string
+}) {
+  const radius = (size - strokeWidth) / 2
+  const circumference = radius * 2 * Math.PI
+  const offset = circumference - (progress / 100) * circumference
+
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="transform -rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="#e2e8f0"
+          strokeWidth={strokeWidth}
+        />
+        <motion.circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          initial={{ strokeDasharray: circumference, strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 1.5, ease: "easeOut" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-lg font-black" style={{ color }}>{Math.round(progress)}%</span>
+      </div>
+    </div>
+  )
+}
+
+// 紙吹雪コンポーネント
+function Confetti({ isActive }: { isActive: boolean }) {
+  const colors = ['#10b981', '#06b6d4', '#f59e0b', '#ec4899', '#8b5cf6']
+  
+  if (!isActive) return null
+
+  return (
+    <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+      {[...Array(50)].map((_, i) => (
+        <motion.div
+          key={i}
+          className="absolute w-3 h-3 rounded-sm"
+          style={{
+            backgroundColor: colors[i % colors.length],
+            left: `${Math.random() * 100}%`,
+            top: -20,
+          }}
+          initial={{ y: -20, rotate: 0, opacity: 1 }}
+          animate={{
+            y: window.innerHeight + 20,
+            rotate: Math.random() * 720 - 360,
+            opacity: [1, 1, 0],
+          }}
+          transition={{
+            duration: 2.5 + Math.random() * 2,
+            delay: Math.random() * 0.5,
+            ease: "easeOut",
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+// 3Dカードコンポーネント
+function Card3D({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [rotateX, setRotateX] = useState(0)
+  const [rotateY, setRotateY] = useState(0)
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!ref.current) return
+    const rect = ref.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const centerX = rect.width / 2
+    const centerY = rect.height / 2
+    const rotateX = (y - centerY) / 10
+    const rotateY = (centerX - x) / 10
+    setRotateX(rotateX)
+    setRotateY(rotateY)
   }
+
+  const handleMouseLeave = () => {
+    setRotateX(0)
+    setRotateY(0)
+  }
+
+  return (
+    <motion.div
+      ref={ref}
+      className={className}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      style={{
+        transformStyle: 'preserve-3d',
+        transform: `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`,
+        transition: 'transform 0.1s ease-out',
+      }}
+    >
+      {children}
+    </motion.div>
+  )
 }
 
-const pulseAnimation = {
-  scale: [1, 1.02, 1],
-  transition: { duration: 2, repeat: Infinity, ease: "easeInOut" }
+// フローティングパーティクル背景
+function FloatingParticles() {
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      {[...Array(20)].map((_, i) => (
+        <motion.div
+          key={i}
+          className="absolute w-2 h-2 rounded-full bg-emerald-400/20"
+          style={{
+            left: `${Math.random() * 100}%`,
+            top: `${Math.random() * 100}%`,
+          }}
+          animate={{
+            y: [0, -30, 0],
+            x: [0, Math.random() * 20 - 10, 0],
+            scale: [1, 1.2, 1],
+            opacity: [0.2, 0.5, 0.2],
+          }}
+          transition={{
+            duration: 3 + Math.random() * 2,
+            repeat: Infinity,
+            delay: Math.random() * 2,
+            ease: "easeInOut",
+          }}
+        />
+      ))}
+    </div>
+  )
 }
 
-const glowAnimation = {
-  boxShadow: [
-    "0 0 20px rgba(16, 185, 129, 0.2)",
-    "0 0 40px rgba(16, 185, 129, 0.4)",
-    "0 0 20px rgba(16, 185, 129, 0.2)"
-  ],
-  transition: { duration: 2, repeat: Infinity, ease: "easeInOut" }
+// ローディングスケルトン
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-8 animate-pulse">
+      <div className="h-64 bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 rounded-3xl" />
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className="h-40 bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 rounded-2xl" />
+        <div className="h-40 bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 rounded-2xl" />
+      </div>
+    </div>
+  )
 }
 
 export function SimulatorForm() {
@@ -164,8 +327,10 @@ export function SimulatorForm() {
   const [error, setError] = useState<string | null>(null)
   const [selectedScenario, setSelectedScenario] = useState<ScenarioKey>('standard')
   const [showRecommendationDetail, setShowRecommendationDetail] = useState(false)
+  const [showConfetti, setShowConfetti] = useState(false)
 
   const RETAIL_PRICE_PER_KWH = 30
+  const resultRef = useRef<HTMLDivElement>(null)
 
   // 使用量から電気代を自動計算
   useEffect(() => {
@@ -324,7 +489,7 @@ export function SimulatorForm() {
       const HIGH_TIME_RATIO = 0.7
       const highTimeUsage = estimatedDailyUsage * HIGH_TIME_RATIO
 
-      // 台数別分析（カバー率ベース）
+      // 台数別分析（カバー率ベース）- ROI計算も電気代上昇を考慮
       const multiUnitAnalyses: MultiUnitAnalysis[] = []
 
       for (let units = 1; units <= 4; units++) {
@@ -355,10 +520,49 @@ export function SimulatorForm() {
         const effectiveReductionRate = maxReductionRate * coverageRate
         const unitAnnualSavings = Math.round(totalCurrentCost * effectiveReductionRate)
         
-        const payback15 = unitAnnualSavings > 0 ? actualInvestment / unitAnnualSavings : 999
-        const total15Years = unitAnnualSavings * WARRANTY_YEARS
-        const netProfit15Years = total15Years - actualInvestment
-        const roi15Years = actualInvestment > 0 ? (netProfit15Years / actualInvestment) * 100 : 0
+        // 各シナリオの回収期間を累積計算で算出
+        const calculatePaybackYear = (annualRate: number): number => {
+          let cumulativeSavings = 0
+          const unitReducedAnnualCost = totalCurrentCost - unitAnnualSavings
+          
+          for (let year = 1; year <= 30; year++) {
+            const yearCostBefore = totalCurrentCost * Math.pow(1 + annualRate, year - 1)
+            const yearCostAfter = unitReducedAnnualCost * Math.pow(1 + annualRate, year - 1)
+            const yearSavings = yearCostBefore - yearCostAfter
+            cumulativeSavings += yearSavings
+            
+            if (cumulativeSavings >= actualInvestment) {
+              const prevCumulative = cumulativeSavings - yearSavings
+              const fraction = (actualInvestment - prevCumulative) / yearSavings
+              return parseFloat((year - 1 + fraction).toFixed(1))
+            }
+          }
+          return 999
+        }
+
+        // シナリオ別ROI計算（電気代上昇を考慮した累積削減額）
+        const calculateRoi = (annualRate: number): number => {
+          let cumulativeSavings = 0
+          const unitReducedAnnualCost = totalCurrentCost - unitAnnualSavings
+          
+          for (let year = 1; year <= WARRANTY_YEARS; year++) {
+            const yearCostBefore = totalCurrentCost * Math.pow(1 + annualRate, year - 1)
+            const yearCostAfter = unitReducedAnnualCost * Math.pow(1 + annualRate, year - 1)
+            const yearSavings = yearCostBefore - yearCostAfter
+            cumulativeSavings += yearSavings
+          }
+          
+          const netProfit = cumulativeSavings - actualInvestment
+          return actualInvestment > 0 ? (netProfit / actualInvestment) * 100 : 0
+        }
+
+        const paybackNoChange = calculatePaybackYear(PRICE_SCENARIOS.noChange.rate)
+        const paybackStandard = calculatePaybackYear(PRICE_SCENARIOS.standard.rate)
+        const paybackWorst = calculatePaybackYear(PRICE_SCENARIOS.worst.rate)
+
+        const roi16YearsNoChange = calculateRoi(PRICE_SCENARIOS.noChange.rate)
+        const roi16YearsStandard = calculateRoi(PRICE_SCENARIOS.standard.rate)
+        const roi16YearsWorst = calculateRoi(PRICE_SCENARIOS.worst.rate)
 
         multiUnitAnalyses.push({
           units: units as 1 | 2 | 3 | 4,
@@ -369,34 +573,36 @@ export function SimulatorForm() {
           actualInvestment,
           annualReduction: unitAnnualSavings,
           coverageRate,
-          paybackStandard: payback15,
-          roi15Years,
+          paybackNoChange,
+          paybackStandard,
+          paybackWorst,
+          roi16YearsNoChange,
+          roi16YearsStandard,
+          roi16YearsWorst,
         })
       }
 
-      // 推奨台数の決定ロジック
+      // 推奨台数の決定ロジック（標準シナリオベース）
       let recommendedUnits: 1 | 2 | 3 | 4 = 1
       let recommendedReason = ''
 
-      // カバー率80%以上かつROI最大のものを推奨
       const viableOptions = multiUnitAnalyses.filter(a => a.coverageRate >= 0.8 && a.paybackStandard <= WARRANTY_YEARS)
       
       if (viableOptions.length > 0) {
         const best = viableOptions.reduce((best, current) => 
-          current.roi15Years > best.roi15Years ? current : best
+          current.roi16YearsStandard > best.roi16YearsStandard ? current : best
         )
         recommendedUnits = best.units
-        recommendedReason = `カバー率${Math.round(best.coverageRate * 100)}%で高効率使用、${WARRANTY_YEARS}年保証内の${best.paybackStandard.toFixed(1)}年で投資回収、ROI ${Math.round(best.roi15Years)}%を実現`
+        recommendedReason = `カバー率${Math.round(best.coverageRate * 100)}%で高効率使用、${WARRANTY_YEARS}年保証内の${best.paybackStandard.toFixed(1)}年で投資回収（標準シナリオ）、ROI ${Math.round(best.roi16YearsStandard)}%を実現`
       } else {
-        // カバー率80%未満でも最もROIが高いものを推奨
         const best = multiUnitAnalyses.reduce((best, current) =>
-          current.roi15Years > best.roi15Years ? current : best
+          current.roi16YearsStandard > best.roi16YearsStandard ? current : best
         )
         recommendedUnits = best.units
         if (best.coverageRate < 0.8) {
           recommendedReason = `現在の電力使用量では${best.units}台でカバー率${Math.round(best.coverageRate * 100)}%。投資効率を最大化`
         } else {
-          recommendedReason = `ROI ${Math.round(best.roi15Years)}%で最も投資効率が高い構成`
+          recommendedReason = `ROI ${Math.round(best.roi16YearsStandard)}%で最も投資効率が高い構成`
         }
       }
 
@@ -507,6 +713,16 @@ export function SimulatorForm() {
         estimatedDailyUsage,
         highTimeUsage,
       })
+
+      // 結果表示時に紙吹雪
+      setShowConfetti(true)
+      setTimeout(() => setShowConfetti(false), 3000)
+
+      // 結果にスクロール
+      setTimeout(() => {
+        resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 100)
+
     } catch (err) {
       console.error('計算エラー:', err)
       setError(err instanceof Error ? err.message : '計算に失敗しました')
@@ -533,58 +749,61 @@ export function SimulatorForm() {
     }
   }
 
+  const getCurrentRoi = (analysis: MultiUnitAnalysis) => {
+    if (selectedScenario === 'noChange') return analysis.roi16YearsNoChange
+    if (selectedScenario === 'standard') return analysis.roi16YearsStandard
+    return analysis.roi16YearsWorst
+  }
+
   return (
-    <div className="space-y-8 md:space-y-20">
-      {/* 入力フォーム - 先端的デザイン */}
+    <div className="space-y-8 md:space-y-16">
+      <Confetti isActive={showConfetti} />
+      
+      {/* 入力フォーム - 白ベースデザイン */}
       <motion.div 
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
-        className="relative"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6 }}
+        className="relative bg-white rounded-3xl md:rounded-[2.5rem] shadow-2xl shadow-slate-200/50 border border-slate-100 overflow-hidden"
       >
-        {/* 背景グラデーション */}
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-3xl md:rounded-[2.5rem]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-emerald-500/20 via-transparent to-transparent rounded-3xl md:rounded-[2.5rem]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,_var(--tw-gradient-stops))] from-cyan-500/10 via-transparent to-transparent rounded-3xl md:rounded-[2.5rem]" />
+        <FloatingParticles />
         
-        {/* グリッドパターン */}
-        <div className="absolute inset-0 opacity-[0.03] rounded-3xl md:rounded-[2.5rem] overflow-hidden">
-          <div className="absolute inset-0" style={{
-            backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`,
-            backgroundSize: '40px 40px'
-          }} />
-        </div>
+        {/* 上部のグラデーションアクセント */}
+        <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-emerald-400 via-cyan-400 to-emerald-400" />
 
         <div className="relative z-10 p-6 md:p-12">
           {/* ヘッダー */}
           <div className="text-center mb-8 md:mb-12">
             <motion.div 
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.2 }}
-              className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 backdrop-blur-sm border border-emerald-500/30 rounded-full px-4 md:px-6 py-2 md:py-2.5 mb-4 md:mb-6"
+              className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-50 to-cyan-50 border border-emerald-200 rounded-full px-4 md:px-6 py-2 md:py-2.5 mb-4 md:mb-6"
             >
-              <motion.div animate={pulseAnimation}>
-                <Zap className="w-4 md:w-5 h-4 md:h-5 text-emerald-400" />
+              <motion.div 
+                animate={{ rotate: [0, 10, -10, 0] }}
+                transition={{ duration: 2, repeat: Infinity }}
+              >
+                <Zap className="w-4 md:w-5 h-4 md:h-5 text-emerald-500" />
               </motion.div>
-              <span className="text-xs md:text-sm font-bold text-emerald-400 tracking-wide">AI診断シミュレーター</span>
+              <span className="text-xs md:text-sm font-bold text-emerald-600 tracking-wide">AI診断シミュレーター</span>
             </motion.div>
             
             <motion.h2 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
-              className="text-2xl md:text-5xl font-black text-white mb-3 md:mb-5 leading-tight tracking-tight"
+              className="text-2xl md:text-5xl font-black text-slate-800 mb-3 md:mb-5 leading-tight tracking-tight"
             >
               電気代削減額を
-              <span className="bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">無料診断</span>
+              <span className="bg-gradient-to-r from-emerald-500 to-cyan-500 bg-clip-text text-transparent"> 無料診断</span>
             </motion.h2>
             
             <motion.p 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.4 }}
-              className="text-sm md:text-lg text-slate-400"
+              className="text-sm md:text-lg text-slate-500"
             >
               JEPXスポット価格データに基づく精密シミュレーション
             </motion.p>
@@ -597,26 +816,26 @@ export function SimulatorForm() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.5 }}
             >
-              <label className="block text-xs md:text-sm font-bold text-slate-300 mb-3 md:mb-4 flex items-center gap-2">
-                <CircleDot className="w-4 h-4 text-emerald-400" />
+              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <CircleDot className="w-4 h-4 text-emerald-500" />
                 お住まいのエリア
               </label>
               <select
                 value={area}
                 onChange={(e) => setArea(e.target.value)}
-                className="w-full px-4 md:px-6 py-3.5 md:py-5 rounded-xl md:rounded-2xl bg-slate-800/50 border border-slate-700 text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all text-sm md:text-base font-medium backdrop-blur-sm"
+                className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-base font-medium"
                 required
               >
-                <option value="" className="bg-slate-800">選択してください</option>
-                <option value="北海道" className="bg-slate-800">北海道</option>
-                <option value="東北" className="bg-slate-800">東北</option>
-                <option value="東京" className="bg-slate-800">東京</option>
-                <option value="中部" className="bg-slate-800">中部</option>
-                <option value="北陸" className="bg-slate-800">北陸</option>
-                <option value="関西" className="bg-slate-800">関西</option>
-                <option value="中国" className="bg-slate-800">中国</option>
-                <option value="四国" className="bg-slate-800">四国</option>
-                <option value="九州" className="bg-slate-800">九州</option>
+                <option value="">選択してください</option>
+                <option value="北海道">北海道</option>
+                <option value="東北">東北</option>
+                <option value="東京">東京</option>
+                <option value="中部">中部</option>
+                <option value="北陸">北陸</option>
+                <option value="関西">関西</option>
+                <option value="中国">中国</option>
+                <option value="四国">四国</option>
+                <option value="九州">九州</option>
               </select>
             </motion.div>
 
@@ -626,36 +845,36 @@ export function SimulatorForm() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.55 }}
             >
-              <label className="block text-xs md:text-sm font-bold text-slate-300 mb-3 md:mb-4 flex items-center gap-2">
-                <Gauge className="w-4 h-4 text-emerald-400" />
+              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <Gauge className="w-4 h-4 text-emerald-500" />
                 入力方法を選択
               </label>
-              <div className="grid grid-cols-2 gap-3 p-1.5 bg-slate-800/50 rounded-xl border border-slate-700">
+              <div className="grid grid-cols-2 gap-3 p-1.5 bg-slate-100 rounded-2xl">
                 <motion.button
                   type="button"
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={() => setInputMode('cost')}
-                  className={`px-4 py-3 rounded-lg font-bold transition-all text-sm ${
+                  className={`px-4 py-3.5 rounded-xl font-bold transition-all text-sm ${
                     inputMode === 'cost'
-                      ? 'bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-lg shadow-emerald-500/25'
-                      : 'text-slate-400 hover:text-white'
+                      ? 'bg-white text-emerald-600 shadow-lg shadow-emerald-100'
+                      : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
-                  💴 電気代から
+                  💴 電気代から入力
                 </motion.button>
                 <motion.button
                   type="button"
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={() => setInputMode('usage')}
-                  className={`px-4 py-3 rounded-lg font-bold transition-all text-sm ${
+                  className={`px-4 py-3.5 rounded-xl font-bold transition-all text-sm ${
                     inputMode === 'usage'
-                      ? 'bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-lg shadow-emerald-500/25'
-                      : 'text-slate-400 hover:text-white'
+                      ? 'bg-white text-emerald-600 shadow-lg shadow-emerald-100'
+                      : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
-                  ⚡ 使用量から
+                  ⚡ 使用量から入力
                 </motion.button>
               </div>
             </motion.div>
@@ -674,8 +893,8 @@ export function SimulatorForm() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                   >
-                    <label className="block text-xs md:text-sm font-bold text-slate-300 mb-3 md:mb-4 flex items-center gap-2">
-                      <DollarSign className="w-4 h-4 text-emerald-400" />
+                    <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                      <DollarSign className="w-4 h-4 text-emerald-500" />
                       月額電気代（円）
                     </label>
                     <div className="relative">
@@ -685,11 +904,11 @@ export function SimulatorForm() {
                         step="1"
                         value={monthlyCost}
                         onChange={(e) => setMonthlyCost(e.target.value)}
-                        className="w-full px-4 md:px-6 py-3.5 md:py-5 rounded-xl md:rounded-2xl bg-slate-800/50 border border-slate-700 text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all text-sm md:text-base font-medium backdrop-blur-sm pr-12"
+                        className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-lg font-bold pr-14"
                         placeholder="例: 80000"
                         required
                       />
-                      <span className="absolute right-4 md:right-6 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-sm md:text-base">
+                      <span className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">
                         円
                       </span>
                     </div>
@@ -701,8 +920,8 @@ export function SimulatorForm() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                   >
-                    <label className="block text-xs md:text-sm font-bold text-slate-300 mb-3 md:mb-4 flex items-center gap-2">
-                      <BatteryCharging className="w-4 h-4 text-emerald-400" />
+                    <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                      <BatteryCharging className="w-4 h-4 text-emerald-500" />
                       月間使用量（kWh）
                     </label>
                     <div className="relative">
@@ -712,11 +931,11 @@ export function SimulatorForm() {
                         step="1"
                         value={monthlyUsage}
                         onChange={(e) => setMonthlyUsage(e.target.value)}
-                        className="w-full px-4 md:px-6 py-3.5 md:py-5 rounded-xl md:rounded-2xl bg-slate-800/50 border border-slate-700 text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all text-sm md:text-base font-medium backdrop-blur-sm pr-16"
+                        className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-lg font-bold pr-20"
                         placeholder="例: 2500"
                         required
                       />
-                      <span className="absolute right-4 md:right-6 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-sm md:text-base">
+                      <span className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">
                         kWh
                       </span>
                     </div>
@@ -724,9 +943,9 @@ export function SimulatorForm() {
                       <motion.p 
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="mt-2 text-xs text-slate-500"
+                        className="mt-3 text-sm text-slate-500 bg-slate-50 rounded-xl px-4 py-2"
                       >
-                        推定電気代: 約 ¥{(parseFloat(monthlyUsage) * RETAIL_PRICE_PER_KWH).toLocaleString()} /月
+                        💡 推定電気代: 約 <span className="font-bold text-emerald-600">¥{(parseFloat(monthlyUsage) * RETAIL_PRICE_PER_KWH).toLocaleString()}</span> /月
                       </motion.p>
                     )}
                   </motion.div>
@@ -740,16 +959,16 @@ export function SimulatorForm() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.7 }}
             >
-              <label className="block text-xs md:text-sm font-bold text-slate-300 mb-3 md:mb-4 flex items-center gap-2">
-                <Users className="w-4 h-4 text-emerald-400" />
+              <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <Users className="w-4 h-4 text-emerald-500" />
                 事業形態
               </label>
-              <div className="grid grid-cols-3 gap-2 md:gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 {(['individual', 'soloProprietor', 'corporate'] as const).map((type) => (
                   <motion.button
                     key={type}
                     type="button"
-                    whileHover={{ scale: 1.03 }}
+                    whileHover={{ scale: 1.03, y: -2 }}
                     whileTap={{ scale: 0.97 }}
                     onClick={() => {
                       setBusinessType(type)
@@ -757,10 +976,10 @@ export function SimulatorForm() {
                       else if (type === 'soloProprietor') setTaxCondition('20')
                       else setTaxCondition('corporateSmall800')
                     }}
-                    className={`px-3 md:px-4 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold transition-all text-xs md:text-sm ${
+                    className={`px-4 py-4 rounded-2xl font-bold transition-all text-sm ${
                       businessType === type
-                        ? 'bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-lg shadow-emerald-500/25'
-                        : 'bg-slate-800/50 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-600'
+                        ? 'bg-gradient-to-br from-emerald-500 to-cyan-500 text-white shadow-lg shadow-emerald-200'
+                        : 'bg-slate-100 border-2 border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
                     {type === 'individual' ? '個人' : type === 'soloProprietor' ? '個人事業主' : '法人'}
@@ -774,10 +993,10 @@ export function SimulatorForm() {
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
-                className="p-4 bg-slate-800/30 rounded-xl border border-slate-700"
+                className="p-4 bg-amber-50 rounded-2xl border border-amber-200"
               >
-                <p className="text-xs md:text-sm text-slate-400 flex items-center gap-2">
-                  <Info className="w-4 h-4 text-slate-500 shrink-0" />
+                <p className="text-sm text-amber-700 flex items-center gap-2">
+                  <Info className="w-4 h-4 shrink-0" />
                   個人の場合、一括損金計上はできないため節税効果はありません。
                 </p>
               </motion.div>
@@ -788,21 +1007,21 @@ export function SimulatorForm() {
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
               >
-                <label className="block text-xs md:text-sm font-bold text-slate-300 mb-3">
+                <label className="block text-sm font-bold text-slate-700 mb-3">
                   所得税率（課税所得に応じて選択）
                 </label>
                 <select
                   value={taxCondition}
                   onChange={(e) => setTaxCondition(e.target.value)}
-                  className="w-full px-4 md:px-6 py-3.5 md:py-5 rounded-xl md:rounded-2xl bg-slate-800/50 border border-slate-700 text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all text-sm md:text-base font-medium"
+                  className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-base font-medium"
                 >
-                  <option value="5" className="bg-slate-800">5% （課税所得195万円以下）</option>
-                  <option value="10" className="bg-slate-800">10% （195万円超〜330万円以下）</option>
-                  <option value="20" className="bg-slate-800">20% （330万円超〜695万円以下）</option>
-                  <option value="23" className="bg-slate-800">23% （695万円超〜900万円以下）</option>
-                  <option value="33" className="bg-slate-800">33% （900万円超〜1,800万円以下）</option>
-                  <option value="40" className="bg-slate-800">40% （1,800万円超〜4,000万円以下）</option>
-                  <option value="45" className="bg-slate-800">45% （4,000万円超）</option>
+                  <option value="5">5% （課税所得195万円以下）</option>
+                  <option value="10">10% （195万円超〜330万円以下）</option>
+                  <option value="20">20% （330万円超〜695万円以下）</option>
+                  <option value="23">23% （695万円超〜900万円以下）</option>
+                  <option value="33">33% （900万円超〜1,800万円以下）</option>
+                  <option value="40">40% （1,800万円超〜4,000万円以下）</option>
+                  <option value="45">45% （4,000万円超）</option>
                 </select>
               </motion.div>
             )}
@@ -812,16 +1031,16 @@ export function SimulatorForm() {
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
               >
-                <label className="block text-xs md:text-sm font-bold text-slate-300 mb-3">
+                <label className="block text-sm font-bold text-slate-700 mb-3">
                   法人規模・所得区分
                 </label>
                 <select
                   value={taxCondition}
                   onChange={(e) => setTaxCondition(e.target.value)}
-                  className="w-full px-4 md:px-6 py-3.5 md:py-5 rounded-xl md:rounded-2xl bg-slate-800/50 border border-slate-700 text-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all text-sm md:text-base font-medium"
+                  className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-slate-200 text-slate-800 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 outline-none transition-all text-base font-medium"
                 >
-                  <option value="corporateSmall800" className="bg-slate-800">中小法人（資本金1億円以下・所得800万円以下）税率15%</option>
-                  <option value="corporateSmall800Plus" className="bg-slate-800">中小法人（資本金1億円以下・所得800万円超）税率23.2%</option>
+                  <option value="corporateSmall800">中小法人（資本金1億円以下・所得800万円以下）税率15%</option>
+                  <option value="corporateSmall800Plus">中小法人（資本金1億円以下・所得800万円超）税率23.2%</option>
                 </select>
               </motion.div>
             )}
@@ -831,28 +1050,28 @@ export function SimulatorForm() {
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
               >
-                <label className="block text-xs md:text-sm font-bold text-slate-300 mb-3 md:mb-4">
+                <label className="block text-sm font-bold text-slate-700 mb-3">
                   税制優遇の選択
                 </label>
-                <div className="grid grid-cols-3 gap-2 md:gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   {[
-                    { key: 'immediate', label: '即時償却' },
-                    { key: 'tax_credit', label: '税額控除' },
-                    { key: 'depreciation', label: '通常償却' }
-                  ].map(({ key, label }) => (
+                    { key: 'immediate', label: '即時償却', icon: '⚡' },
+                    { key: 'tax_credit', label: '税額控除', icon: '💰' },
+                    { key: 'depreciation', label: '通常償却', icon: '📊' }
+                  ].map(({ key, label, icon }) => (
                     <motion.button
                       key={key}
                       type="button"
                       whileHover={{ scale: 1.03 }}
                       whileTap={{ scale: 0.97 }}
                       onClick={() => setTaxPattern(key as TaxIncentivePattern)}
-                      className={`px-3 md:px-4 py-3 md:py-4 rounded-xl font-bold transition-all text-xs md:text-sm ${
+                      className={`px-3 py-3 rounded-xl font-bold transition-all text-sm ${
                         taxPattern === key
-                          ? 'bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-lg shadow-emerald-500/25'
-                          : 'bg-slate-800/50 border border-slate-700 text-slate-400 hover:text-white'
+                          ? 'bg-gradient-to-br from-emerald-500 to-cyan-500 text-white shadow-lg shadow-emerald-200'
+                          : 'bg-slate-100 border-2 border-slate-200 text-slate-600 hover:border-slate-300'
                       }`}
                     >
-                      {label}
+                      <span className="mr-1">{icon}</span> {label}
                     </motion.button>
                   ))}
                 </div>
@@ -863,7 +1082,7 @@ export function SimulatorForm() {
                     animate={{ opacity: 1 }}
                     className="mt-4"
                   >
-                    <label className="block text-xs font-bold text-slate-400 mb-2">税額控除率</label>
+                    <label className="block text-xs font-bold text-slate-500 mb-2">税額控除率</label>
                     <div className="grid grid-cols-2 gap-2">
                       {[0.07, 0.10].map((rate) => (
                         <motion.button
@@ -871,10 +1090,10 @@ export function SimulatorForm() {
                           type="button"
                           whileTap={{ scale: 0.97 }}
                           onClick={() => setTaxCreditRate(rate as 0.07 | 0.10)}
-                          className={`px-4 py-2.5 rounded-lg font-semibold text-sm ${
+                          className={`px-4 py-3 rounded-xl font-bold text-sm ${
                             taxCreditRate === rate
                               ? 'bg-emerald-500 text-white'
-                              : 'bg-slate-800 border border-slate-700 text-slate-400'
+                              : 'bg-slate-100 border-2 border-slate-200 text-slate-600'
                           }`}
                         >
                           {rate * 100}%
@@ -890,8 +1109,9 @@ export function SimulatorForm() {
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm font-medium"
+                className="p-4 rounded-2xl bg-red-50 border border-red-200 text-red-600 text-sm font-medium flex items-center gap-2"
               >
+                <AlertCircle className="w-5 h-5 shrink-0" />
                 {error}
               </motion.div>
             )}
@@ -905,22 +1125,22 @@ export function SimulatorForm() {
                 type="submit"
                 size="lg"
                 disabled={loading || !area || !monthlyCost}
-                className="w-full h-14 md:h-18 text-base md:text-xl font-black bg-gradient-to-r from-emerald-500 via-cyan-500 to-emerald-500 bg-[length:200%_100%] hover:bg-[position:100%_0] transition-all duration-500 disabled:opacity-50 rounded-xl md:rounded-2xl shadow-2xl shadow-emerald-500/25 border-0"
+                className="w-full h-16 md:h-20 text-lg md:text-xl font-black bg-gradient-to-r from-emerald-500 via-cyan-500 to-emerald-500 bg-[length:200%_100%] hover:bg-[position:100%_0] transition-all duration-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-2xl shadow-2xl shadow-emerald-200 border-0 text-white"
               >
                 {loading ? (
                   <span className="flex items-center justify-center gap-3">
                     <motion.div 
                       animate={{ rotate: 360 }}
                       transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                      className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                      className="w-6 h-6 border-3 border-white border-t-transparent rounded-full"
                     />
                     <span>AIが分析中...</span>
                   </span>
                 ) : (
                   <span className="flex items-center justify-center gap-3">
-                    <Sparkles className="w-5 h-5" />
+                    <Sparkles className="w-6 h-6" />
                     <span>削減効果をシミュレーション</span>
-                    <ArrowRight className="w-5 h-5" />
+                    <ArrowRight className="w-6 h-6" />
                   </span>
                 )}
               </Button>
@@ -929,54 +1149,41 @@ export function SimulatorForm() {
         </div>
       </motion.div>
 
+      {/* ローディング表示 */}
+      {loading && <LoadingSkeleton />}
+
       {/* 結果表示 */}
       {result && (
         <motion.div 
+          ref={resultRef}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.8 }}
-          className="space-y-8 md:space-y-16"
+          className="space-y-8 md:space-y-12"
         >
-          {/* メインサマリー - ダイナミックカード */}
-          <motion.div 
-            {...fadeInUp}
-            className="relative overflow-hidden"
-          >
-            <div className="absolute inset-0 bg-gradient-to-br from-emerald-600 via-teal-600 to-cyan-600 rounded-3xl md:rounded-[2.5rem]" />
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white/20 via-transparent to-transparent rounded-3xl md:rounded-[2.5rem]" />
+          {/* メインサマリー */}
+          <Card3D className="relative overflow-hidden bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 rounded-3xl md:rounded-[2.5rem] shadow-2xl shadow-emerald-200">
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white/20 via-transparent to-transparent" />
             
-            {/* 動くパーティクル風装飾 */}
             <motion.div 
+              className="absolute top-10 right-10 w-64 h-64 bg-white/10 rounded-full blur-3xl"
               animate={{ 
-                x: [0, 100, 0],
-                y: [0, -50, 0],
-                opacity: [0.3, 0.6, 0.3]
+                scale: [1, 1.2, 1],
+                opacity: [0.3, 0.5, 0.3]
               }}
-              transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-              className="absolute top-20 right-20 w-64 h-64 bg-white/10 rounded-full blur-3xl"
-            />
-            <motion.div 
-              animate={{ 
-                x: [0, -80, 0],
-                y: [0, 80, 0],
-                opacity: [0.2, 0.5, 0.2]
-              }}
-              transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
-              className="absolute bottom-10 left-10 w-48 h-48 bg-cyan-400/20 rounded-full blur-3xl"
+              transition={{ duration: 4, repeat: Infinity }}
             />
 
             <div className="relative z-10 p-6 md:p-14">
-              <div className="text-center mb-8 md:mb-14">
+              <div className="text-center mb-8 md:mb-12">
                 <motion.div 
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
+                  initial={{ scale: 0, rotate: -180 }}
+                  animate={{ scale: 1, rotate: 0 }}
                   transition={{ type: "spring", stiffness: 200, delay: 0.2 }}
-                  className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-full px-5 md:px-8 py-2.5 md:py-3 mb-5 md:mb-8"
+                  className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-full px-6 py-3 mb-6"
                 >
-                  <motion.div animate={pulseAnimation}>
-                    <TrendingDown className="w-5 md:w-6 h-5 md:h-6 text-white" />
-                  </motion.div>
-                  <span className="text-sm md:text-base font-bold text-white">{result.area}エリア診断結果</span>
+                  <PartyPopper className="w-5 h-5 text-white" />
+                  <span className="text-sm font-bold text-white">{result.area}エリア診断完了！</span>
                 </motion.div>
                 
                 <motion.div
@@ -984,30 +1191,29 @@ export function SimulatorForm() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.4 }}
                 >
-                  <p className="text-white/80 text-sm md:text-lg mb-2">年間削減効果</p>
-                  <h2 className="text-5xl md:text-8xl font-black text-white mb-2 tracking-tight">
-                    {result.reductionRate}<span className="text-3xl md:text-5xl">%</span>
+                  <p className="text-white/80 text-base mb-2">年間削減効果</p>
+                  <h2 className="text-6xl md:text-9xl font-black text-white mb-2 tracking-tight">
+                    <AnimatedNumber value={result.reductionRate} suffix="%" duration={2} decimals={0} />
                   </h2>
-                  <p className="text-white/70 text-xs md:text-base">AI-EMSによるJEPXスポット価格最適化</p>
+                  <p className="text-white/70 text-sm">AI-EMSによるJEPXスポット価格最適化</p>
                 </motion.div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4 md:gap-6 mb-8 md:mb-12">
+              <div className="grid md:grid-cols-2 gap-4 md:gap-6 mb-8">
                 <motion.div 
                   initial={{ opacity: 0, x: -30 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.5 }}
-                  whileHover={{ scale: 1.02, y: -5 }}
-                  className="bg-white/10 backdrop-blur-md rounded-2xl md:rounded-3xl p-5 md:p-8 border border-white/20"
+                  className="bg-white/15 backdrop-blur-md rounded-3xl p-6 md:p-8 border border-white/20"
                 >
-                  <div className="flex items-center gap-3 mb-4 md:mb-6">
-                    <div className="w-12 md:w-16 h-12 md:h-16 bg-white/20 rounded-2xl flex items-center justify-center">
-                      <Calendar className="w-6 md:w-8 h-6 md:h-8 text-white" />
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center">
+                      <Calendar className="w-7 h-7 text-white" />
                     </div>
-                    <span className="text-sm md:text-base font-bold text-white/80">月間削減額</span>
+                    <span className="text-base font-bold text-white/80">月間削減額</span>
                   </div>
-                  <p className="text-4xl md:text-6xl font-black text-white">
-                    ¥{result.avgMonthlySavings.toLocaleString()}
+                  <p className="text-4xl md:text-5xl font-black text-white">
+                    ¥<AnimatedNumber value={result.avgMonthlySavings} duration={2} />
                   </p>
                 </motion.div>
 
@@ -1015,22 +1221,21 @@ export function SimulatorForm() {
                   initial={{ opacity: 0, x: 30 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.6 }}
-                  whileHover={{ scale: 1.02, y: -5 }}
-                  className="bg-white/10 backdrop-blur-md rounded-2xl md:rounded-3xl p-5 md:p-8 border border-white/20"
+                  className="bg-white/15 backdrop-blur-md rounded-3xl p-6 md:p-8 border border-white/20"
                 >
-                  <div className="flex items-center gap-3 mb-4 md:mb-6">
-                    <div className="w-12 md:w-16 h-12 md:h-16 bg-white/20 rounded-2xl flex items-center justify-center">
-                      <DollarSign className="w-6 md:w-8 h-6 md:h-8 text-white" />
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center">
+                      <DollarSign className="w-7 h-7 text-white" />
                     </div>
-                    <span className="text-sm md:text-base font-bold text-white/80">年間削減額</span>
+                    <span className="text-base font-bold text-white/80">年間削減額</span>
                   </div>
-                  <p className="text-4xl md:text-6xl font-black text-white">
-                    ¥{result.annualSavings.toLocaleString()}
+                  <p className="text-4xl md:text-5xl font-black text-white">
+                    ¥<AnimatedNumber value={result.annualSavings} duration={2} />
                   </p>
                 </motion.div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {[
                   { icon: Mail, label: '無料相談', href: 'https://docs.google.com/forms/d/e/1FAIpQLSdVRVxurB8AOO9KT1-Mv5kmM3A_VawLS-gB6mfW2Ia4LO-DuQ/viewform?usp=header' },
                   { icon: FileText, label: '資料請求', href: 'https://docs.google.com/forms/d/e/1FAIpQLSdVRVxurB8AOO9KT1-Mv5kmM3A_VawLS-gB6mfW2Ia4LO-DuQ/viewform?usp=header' },
@@ -1041,15 +1246,16 @@ export function SimulatorForm() {
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.7 + i * 0.1 }}
+                    whileHover={{ scale: 1.03, y: -3 }}
                   >
                     <Button
                       size="lg"
                       variant="outline"
-                      className="w-full bg-white text-emerald-600 hover:bg-white/90 border-0 h-13 md:h-16 font-black shadow-xl text-sm md:text-base rounded-xl"
+                      className="w-full bg-white text-emerald-600 hover:bg-emerald-50 border-0 h-14 font-black shadow-xl text-base rounded-2xl"
                       asChild
                     >
                       <a href={href} target={href.startsWith('http') ? '_blank' : undefined} rel={href.startsWith('http') ? 'noopener noreferrer' : undefined}>
-                        <Icon className="mr-2 w-4 md:w-5 h-4 md:h-5" />
+                        <Icon className="mr-2 w-5 h-5" />
                         {label}
                       </a>
                     </Button>
@@ -1057,175 +1263,212 @@ export function SimulatorForm() {
                 ))}
               </div>
             </div>
-          </motion.div>
+          </Card3D>
 
-          {/* 推奨台数セクション - 先端的デザイン */}
+          {/* 推奨台数セクション */}
           <motion.div 
-            {...fadeInUp}
-            className="relative overflow-hidden bg-slate-900 rounded-3xl md:rounded-[2.5rem] p-6 md:p-12"
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="bg-white rounded-3xl md:rounded-[2.5rem] shadow-xl shadow-slate-100 border border-slate-100 p-6 md:p-12"
           >
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-emerald-500/10 via-transparent to-transparent" />
-            <div className="absolute inset-0 opacity-[0.02]" style={{
-              backgroundImage: `linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)`,
-              backgroundSize: '60px 60px'
-            }} />
-
-            <div className="relative z-10">
-              <div className="text-center mb-8 md:mb-12">
-                <motion.div 
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: "spring", stiffness: 200 }}
-                  className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 rounded-full px-5 md:px-6 py-2.5 mb-5"
-                >
-                  <Target className="w-4 md:w-5 h-4 md:h-5 text-emerald-400" />
-                  <span className="text-xs md:text-sm font-bold text-emerald-400">最適構成診断</span>
-                </motion.div>
-                
-                <h3 className="text-3xl md:text-6xl font-black text-white mb-3 md:mb-4">
-                  推奨: <span className="bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">{result.recommendedUnits}台</span>構成
-                </h3>
-                
-                <motion.button
-                  onClick={() => setShowRecommendationDetail(!showRecommendationDetail)}
-                  className="inline-flex items-center gap-2 text-slate-400 hover:text-emerald-400 transition-colors text-sm"
-                >
-                  <Info className="w-4 h-4" />
-                  なぜこの台数？
-                  <ChevronDown className={`w-4 h-4 transition-transform ${showRecommendationDetail ? 'rotate-180' : ''}`} />
-                </motion.button>
-                
-                <AnimatePresence>
-                  {showRecommendationDetail && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="mt-4 p-4 bg-slate-800/50 rounded-xl border border-slate-700 text-left max-w-2xl mx-auto"
-                    >
-                      <p className="text-slate-300 text-sm leading-relaxed">
-                        {result.recommendedReason}
-                      </p>
-                      <div className="mt-3 pt-3 border-t border-slate-700 grid grid-cols-3 gap-4 text-center">
-                        <div>
-                          <p className="text-xs text-slate-500">推定日間使用量</p>
-                          <p className="text-emerald-400 font-bold">{result.estimatedDailyUsage.toFixed(1)} kWh</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-500">高価格帯使用量</p>
-                          <p className="text-emerald-400 font-bold">{result.highTimeUsage.toFixed(1)} kWh</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-500">蓄電池容量</p>
-                          <p className="text-emerald-400 font-bold">{(BATTERY_SPEC.dailyCapacity * result.recommendedUnits).toFixed(1)} kWh</p>
-                        </div>
+            <div className="text-center mb-8 md:mb-12">
+              <motion.div 
+                initial={{ scale: 0 }}
+                whileInView={{ scale: 1 }}
+                viewport={{ once: true }}
+                transition={{ type: "spring", stiffness: 200 }}
+                className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-50 to-cyan-50 border border-emerald-200 rounded-full px-5 py-2.5 mb-5"
+              >
+                <Target className="w-4 h-4 text-emerald-500" />
+                <span className="text-sm font-bold text-emerald-600">最適構成診断</span>
+              </motion.div>
+              
+              <h3 className="text-3xl md:text-5xl font-black text-slate-800 mb-3">
+                推奨: <span className="bg-gradient-to-r from-emerald-500 to-cyan-500 bg-clip-text text-transparent">{result.recommendedUnits}台</span>構成
+              </h3>
+              
+              <motion.button
+                onClick={() => setShowRecommendationDetail(!showRecommendationDetail)}
+                className="inline-flex items-center gap-2 text-slate-500 hover:text-emerald-500 transition-colors text-sm font-medium"
+              >
+                <Info className="w-4 h-4" />
+                なぜこの台数？
+                <ChevronDown className={`w-4 h-4 transition-transform ${showRecommendationDetail ? 'rotate-180' : ''}`} />
+              </motion.button>
+              
+              <AnimatePresence>
+                {showRecommendationDetail && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mt-4 p-5 bg-slate-50 rounded-2xl border border-slate-200 text-left max-w-2xl mx-auto"
+                  >
+                    <p className="text-slate-600 text-sm leading-relaxed">
+                      {result.recommendedReason}
+                    </p>
+                    <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-3 gap-4 text-center">
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1">推定日間使用量</p>
+                        <p className="text-emerald-600 font-bold">{result.estimatedDailyUsage.toFixed(1)} kWh</p>
                       </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1">高価格帯使用量</p>
+                        <p className="text-emerald-600 font-bold">{result.highTimeUsage.toFixed(1)} kWh</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1">蓄電池容量</p>
+                        <p className="text-emerald-600 font-bold">{(BATTERY_SPEC.dailyCapacity * result.recommendedUnits).toFixed(1)} kWh</p>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
-              <div className="grid md:grid-cols-4 gap-3 md:gap-4">
-                {result.multiUnitAnalyses.map((analysis, i) => {
-                  const isRecommended = analysis.units === result.recommendedUnits
+            {/* シナリオ選択タブ */}
+            <div className="mb-8">
+              <p className="text-xs text-slate-400 text-center mb-3">電気代上昇シナリオを選択して比較</p>
+              <div className="grid grid-cols-3 gap-2 p-1.5 bg-slate-100 rounded-2xl max-w-md mx-auto">
+                {(Object.keys(PRICE_SCENARIOS) as ScenarioKey[]).map((key) => {
+                  const scenario = PRICE_SCENARIOS[key]
+                  const isSelected = selectedScenario === key
+                  
                   return (
-                    <motion.div
-                      key={analysis.units}
-                      initial={{ opacity: 0, y: 30 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.1 }}
-                      whileHover={{ y: -8, scale: 1.02 }}
-                      className={`relative rounded-2xl md:rounded-3xl p-5 md:p-6 transition-all ${
-                        isRecommended
-                          ? 'bg-gradient-to-br from-emerald-500 to-cyan-500 shadow-2xl shadow-emerald-500/30'
-                          : 'bg-slate-800/50 border border-slate-700 hover:border-slate-600'
+                    <motion.button
+                      key={key}
+                      type="button"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setSelectedScenario(key)}
+                      className={`relative px-3 py-3 rounded-xl font-bold transition-all text-xs ${
+                        isSelected
+                          ? 'bg-white shadow-md text-slate-800'
+                          : 'text-slate-500 hover:text-slate-700'
                       }`}
                     >
-                      {isRecommended && (
-                        <motion.div 
-                          initial={{ scale: 0 }}
-                          animate={{ scale: 1 }}
-                          className="absolute -top-3 -right-3 bg-yellow-400 text-yellow-900 rounded-full p-2"
-                        >
-                          <Award className="w-4 h-4" />
-                        </motion.div>
-                      )}
-                      
-                      <div className="text-center mb-4">
-                        <div className="flex justify-center gap-1 mb-2">
-                          {[...Array(analysis.units)].map((_, j) => (
-                            <Battery key={j} className={`w-5 h-5 ${isRecommended ? 'text-white' : 'text-emerald-400'}`} />
-                          ))}
-                        </div>
-                        <p className={`text-3xl md:text-4xl font-black ${isRecommended ? 'text-white' : 'text-white'}`}>
-                          {analysis.units}台
-                        </p>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <div 
+                          className="w-2.5 h-2.5 rounded-full" 
+                          style={{ backgroundColor: scenario.color }} 
+                        />
+                        <span>年{scenario.shortName}上昇</span>
                       </div>
-                      
-                      <div className="space-y-2 text-xs md:text-sm">
-                        <div className={`flex justify-between ${isRecommended ? 'text-white/90' : 'text-slate-400'}`}>
-                          <span>カバー率</span>
-                          <span className={`font-bold ${isRecommended ? 'text-white' : 'text-emerald-400'}`}>
-                            {(analysis.coverageRate * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                        <div className={`flex justify-between ${isRecommended ? 'text-white/90' : 'text-slate-400'}`}>
-                          <span>年間削減</span>
-                          <span className={`font-bold ${isRecommended ? 'text-white' : 'text-white'}`}>
-                            ¥{(analysis.annualReduction / 10000).toFixed(0)}万
-                          </span>
-                        </div>
-                        <div className={`flex justify-between ${isRecommended ? 'text-white/90' : 'text-slate-400'}`}>
-                          <span>回収期間</span>
-                          <span className={`font-bold ${isRecommended ? 'text-white' : analysis.paybackStandard <= WARRANTY_YEARS ? 'text-emerald-400' : 'text-amber-400'}`}>
-                            {analysis.paybackStandard.toFixed(1)}年
-                          </span>
-                        </div>
-                        <div className={`flex justify-between ${isRecommended ? 'text-white/90' : 'text-slate-400'}`}>
-                          <span>{WARRANTY_YEARS}年ROI</span>
-                          <span className={`font-bold ${isRecommended ? 'text-white' : 'text-cyan-400'}`}>
-                            {analysis.roi15Years.toFixed(0)}%
-                          </span>
-                        </div>
-                        <div className={`pt-2 border-t ${isRecommended ? 'border-white/30' : 'border-slate-700'}`}>
-                          <div className={`flex justify-between ${isRecommended ? 'text-white/70' : 'text-slate-500'}`}>
-                            <span className="text-xs">実質投資</span>
-                            <span className="text-xs font-bold">¥{(analysis.actualInvestment / 10000).toFixed(0)}万</span>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
+                    </motion.button>
                   )
                 })}
               </div>
+            </div>
+
+            {/* 台数比較カード */}
+            <div className="grid md:grid-cols-4 gap-4">
+              {result.multiUnitAnalyses.map((analysis, i) => {
+                const isRecommended = analysis.units === result.recommendedUnits
+                const currentPayback = selectedScenario === 'noChange' ? analysis.paybackNoChange :
+                                      selectedScenario === 'standard' ? analysis.paybackStandard :
+                                      analysis.paybackWorst
+                const currentRoi = getCurrentRoi(analysis)
+                
+                return (
+                  <motion.div
+                    key={analysis.units}
+                    initial={{ opacity: 0, y: 30 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: i * 0.1 }}
+                    whileHover={{ y: -8 }}
+                    className={`relative rounded-3xl p-5 transition-all ${
+                      isRecommended
+                        ? 'bg-gradient-to-br from-emerald-500 to-cyan-500 shadow-xl shadow-emerald-200'
+                        : 'bg-slate-50 border-2 border-slate-200 hover:border-emerald-200 hover:shadow-lg'
+                    }`}
+                  >
+                    {isRecommended && (
+                      <motion.div 
+                        initial={{ scale: 0, rotate: -45 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        className="absolute -top-3 -right-3 bg-yellow-400 text-yellow-900 rounded-full p-2 shadow-lg"
+                      >
+                        <Award className="w-4 h-4" />
+                      </motion.div>
+                    )}
+                    
+                    <div className="text-center mb-4">
+                      <div className="flex justify-center mb-3">
+                        <ProgressRing 
+                          progress={analysis.coverageRate * 100} 
+                          size={70}
+                          color={isRecommended ? '#fff' : '#10b981'}
+                        />
+                      </div>
+                      <p className={`text-3xl font-black ${isRecommended ? 'text-white' : 'text-slate-800'}`}>
+                        {analysis.units}台
+                      </p>
+                      <p className={`text-xs ${isRecommended ? 'text-white/70' : 'text-slate-400'}`}>
+                        カバー率
+                      </p>
+                    </div>
+                    
+                    <div className="space-y-2 text-sm">
+                      <div className={`flex justify-between ${isRecommended ? 'text-white/90' : 'text-slate-500'}`}>
+                        <span>年間削減</span>
+                        <span className={`font-bold ${isRecommended ? 'text-white' : 'text-slate-800'}`}>
+                          ¥{(analysis.annualReduction / 10000).toFixed(0)}万
+                        </span>
+                      </div>
+                      <div className={`flex justify-between ${isRecommended ? 'text-white/90' : 'text-slate-500'}`}>
+                        <span>回収期間</span>
+                        <span className={`font-bold ${isRecommended ? 'text-white' : currentPayback <= WARRANTY_YEARS ? 'text-emerald-600' : 'text-amber-500'}`}>
+                          {currentPayback < 999 ? `${currentPayback.toFixed(1)}年` : '−'}
+                        </span>
+                      </div>
+                      <div className={`flex justify-between ${isRecommended ? 'text-white/90' : 'text-slate-500'}`}>
+                        <span>{WARRANTY_YEARS}年ROI</span>
+                        <span className={`font-bold ${isRecommended ? 'text-white' : 'text-cyan-600'}`}>
+                          {currentRoi.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className={`pt-2 border-t ${isRecommended ? 'border-white/30' : 'border-slate-200'}`}>
+                        <div className={`flex justify-between ${isRecommended ? 'text-white/70' : 'text-slate-400'}`}>
+                          <span className="text-xs">実質投資</span>
+                          <span className="text-xs font-bold">¥{(analysis.actualInvestment / 10000).toFixed(0)}万</span>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )
+              })}
             </div>
           </motion.div>
 
           {/* 月別グラフ */}
           <motion.div 
-            {...fadeInUp} 
-            className="bg-white rounded-3xl md:rounded-[2.5rem] border border-slate-200 p-6 md:p-12 shadow-xl"
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="bg-white rounded-3xl md:rounded-[2.5rem] shadow-xl shadow-slate-100 border border-slate-100 p-6 md:p-12"
           >
-            <div className="mb-6 md:mb-10">
-              <h3 className="text-2xl md:text-4xl font-black text-slate-900 mb-2 md:mb-3">
-                {result.area}エリアの年間電気代推移
+            <div className="mb-8">
+              <h3 className="text-2xl md:text-3xl font-black text-slate-800 mb-2">
+                📊 {result.area}エリアの年間電気代推移
               </h3>
-              <p className="text-sm md:text-base text-slate-500">
-                JEPXスポット価格の月別変動を反映したシミュレーション
+              <p className="text-sm text-slate-500">
+                JEPXスポット価格の月別変動を反映
               </p>
             </div>
 
-            <div className="h-64 md:h-96 bg-gradient-to-br from-slate-50 to-white rounded-2xl p-4 md:p-6">
+            <div className="h-72 md:h-96 bg-gradient-to-br from-slate-50 to-white rounded-2xl p-4">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={result.monthlyData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorCurrent" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0.02} />
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="colorReduced" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.02} />
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
@@ -1233,33 +1476,33 @@ export function SimulatorForm() {
                     dataKey="month"
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fill: "#64748b", fontSize: 11, fontWeight: 600 }}
+                    tick={{ fill: "#64748b", fontSize: 12, fontWeight: 600 }}
                   />
                   <YAxis
                     axisLine={false}
                     tickLine={false}
-                    tick={{ fill: "#64748b", fontSize: 11, fontWeight: 600 }}
+                    tick={{ fill: "#64748b", fontSize: 12, fontWeight: 600 }}
                     tickFormatter={(value) => `¥${(value / 1000).toFixed(0)}k`}
                   />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: '#0f172a',
-                      border: 'none',
-                      borderRadius: '12px',
+                      backgroundColor: '#fff',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '16px',
                       padding: '12px 16px',
                       fontSize: '13px',
-                      color: '#fff',
+                      boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
                     }}
                     formatter={(value: number) => [`¥${value.toLocaleString()}`, '']}
-                    labelStyle={{ fontWeight: 700, marginBottom: 4 }}
+                    labelStyle={{ fontWeight: 700, marginBottom: 4, color: '#334155' }}
                   />
-                  <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '12px' }} iconType="circle" />
+                  <Legend wrapperStyle={{ paddingTop: '20px', fontSize: '13px' }} iconType="circle" />
                   <Area
                     type="monotone"
                     dataKey="currentCost"
                     name="従来"
                     stroke="#ef4444"
-                    strokeWidth={2.5}
+                    strokeWidth={3}
                     fill="url(#colorCurrent)"
                     dot={{ fill: "#ef4444", strokeWidth: 2, r: 4, stroke: "#fff" }}
                   />
@@ -1268,7 +1511,7 @@ export function SimulatorForm() {
                     dataKey="reducedCost"
                     name="ENELEAGE導入後"
                     stroke="#10b981"
-                    strokeWidth={2.5}
+                    strokeWidth={3}
                     fill="url(#colorReduced)"
                     dot={{ fill: "#10b981", strokeWidth: 2, r: 4, stroke: "#fff" }}
                   />
@@ -1277,28 +1520,30 @@ export function SimulatorForm() {
             </div>
           </motion.div>
 
-          {/* シナリオ選択セクション */}
+          {/* シナリオ分析セクション */}
           <motion.div 
-            {...fadeInUp} 
-            className="bg-white rounded-3xl md:rounded-[2.5rem] border border-slate-200 p-6 md:p-12 shadow-xl"
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="bg-white rounded-3xl md:rounded-[2.5rem] shadow-xl shadow-slate-100 border border-slate-100 p-6 md:p-12"
           >
-            <div className="mb-6 md:mb-10">
+            <div className="mb-8">
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-cyan-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/25">
+                <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-cyan-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-200">
                   <TrendingUp className="w-6 h-6 text-white" />
                 </div>
-                <h3 className="text-xl md:text-4xl font-black text-slate-900">
+                <h3 className="text-xl md:text-3xl font-black text-slate-800">
                   電気代上昇シナリオ分析
                 </h3>
               </div>
-              <p className="text-sm md:text-base text-slate-500">
+              <p className="text-sm text-slate-500">
                 過去データに基づく3つのシナリオで将来を予測
               </p>
             </div>
 
             {/* シナリオタブ */}
             <div className="mb-8">
-              <div className="grid grid-cols-3 gap-2 md:gap-3 p-1.5 bg-slate-100 rounded-2xl">
+              <div className="grid grid-cols-3 gap-3 p-2 bg-slate-100 rounded-2xl">
                 {(Object.keys(PRICE_SCENARIOS) as ScenarioKey[]).map((key) => {
                   const scenario = PRICE_SCENARIOS[key]
                   const isSelected = selectedScenario === key
@@ -1309,13 +1554,13 @@ export function SimulatorForm() {
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                       onClick={() => setSelectedScenario(key)}
-                      className={`relative px-3 md:px-6 py-3 md:py-4 rounded-xl font-bold transition-all text-xs md:text-sm ${
+                      className={`relative px-4 py-4 rounded-xl font-bold transition-all text-sm ${
                         isSelected
-                          ? 'bg-white shadow-lg text-slate-900'
+                          ? 'bg-white shadow-lg text-slate-800'
                           : 'text-slate-500 hover:text-slate-700'
                       }`}
                     >
-                      <div className="flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2">
+                      <div className="flex flex-col md:flex-row items-center justify-center gap-2">
                         <div 
                           className="w-3 h-3 rounded-full shadow-sm" 
                           style={{ backgroundColor: scenario.color }} 
@@ -1323,12 +1568,6 @@ export function SimulatorForm() {
                         <span className="hidden md:inline">{scenario.name}</span>
                         <span className="md:hidden text-xs">年{scenario.shortName}上昇</span>
                       </div>
-                      {isSelected && (
-                        <motion.div
-                          layoutId="activeTab"
-                          className="absolute inset-0 bg-white rounded-xl shadow-lg -z-10"
-                        />
-                      )}
                     </motion.button>
                   )
                 })}
@@ -1336,9 +1575,9 @@ export function SimulatorForm() {
             </div>
 
             {/* 長期予測グラフ */}
-            <div className="bg-slate-50 rounded-2xl p-4 md:p-8 mb-8">
-              <h4 className="font-bold text-slate-700 text-base md:text-xl mb-4 md:mb-6">20年間の電気代推移予測</h4>
-              <div className="h-64 md:h-80">
+            <div className="bg-slate-50 rounded-2xl p-4 md:p-8 mb-6">
+              <h4 className="font-bold text-slate-700 text-base md:text-lg mb-4">📈 20年間の電気代推移予測</h4>
+              <div className="h-64 md:h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={result.longTermData.slice(0, 21)} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1356,12 +1595,12 @@ export function SimulatorForm() {
                     />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: '#0f172a',
-                        border: 'none',
+                        backgroundColor: '#fff',
+                        border: '1px solid #e2e8f0',
                         borderRadius: '12px',
                         padding: '12px 16px',
                         fontSize: '12px',
-                        color: '#fff',
+                        boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
                       }}
                       formatter={(value: number) => `¥${value.toLocaleString()}`}
                     />
@@ -1390,12 +1629,12 @@ export function SimulatorForm() {
             </div>
 
             {/* 投資回収グラフ */}
-            <div className="bg-slate-50 rounded-2xl p-4 md:p-8 mb-8">
-              <h4 className="font-bold text-slate-700 text-base md:text-xl mb-2">投資回収シミュレーション</h4>
-              <p className="text-xs md:text-sm text-slate-500 mb-4 md:mb-6">
+            <div className="bg-slate-50 rounded-2xl p-4 md:p-8 mb-6">
+              <h4 className="font-bold text-slate-700 text-base md:text-lg mb-2">💰 投資回収シミュレーション</h4>
+              <p className="text-xs text-slate-500 mb-4">
                 {getBusinessTypeName()} / {getTaxConditionName()}
               </p>
-              <div className="h-64 md:h-80">
+              <div className="h-64 md:h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={result.paybackData} margin={{ top: 20, right: 10, left: -10, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -1413,12 +1652,12 @@ export function SimulatorForm() {
                     />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: '#0f172a',
-                        border: 'none',
+                        backgroundColor: '#fff',
+                        border: '1px solid #e2e8f0',
                         borderRadius: '12px',
                         padding: '12px 16px',
                         fontSize: '12px',
-                        color: '#fff',
+                        boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
                       }}
                       formatter={(value: number) => `¥${value.toLocaleString()}`}
                     />
@@ -1427,7 +1666,7 @@ export function SimulatorForm() {
                       content={() => (
                         <div className="flex flex-wrap justify-center gap-4 pt-4 text-xs">
                           <div className="flex items-center gap-2">
-                            <div className="w-4 h-0.5 bg-red-500" style={{ borderTop: '2px dashed #ef4444' }} />
+                            <div className="w-4 h-0.5 bg-red-400" style={{ borderTop: '2px dashed #f87171' }} />
                             <span className="text-slate-600 font-medium">実質投資額</span>
                           </div>
                           <div className="flex items-center gap-2">
@@ -1435,7 +1674,7 @@ export function SimulatorForm() {
                             <span className="text-slate-600 font-medium">累積削減額</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <div className="w-6 h-0.5 border-t-2 border-dashed border-amber-500" />
+                            <div className="w-6 h-0.5 border-t-2 border-dashed border-amber-400" />
                             <span className="text-slate-600 font-medium">{WARRANTY_YEARS}年保証</span>
                           </div>
                         </div>
@@ -1444,7 +1683,7 @@ export function SimulatorForm() {
                     
                     <ReferenceLine 
                       x={WARRANTY_YEARS} 
-                      stroke="#f59e0b" 
+                      stroke="#fbbf24" 
                       strokeWidth={2}
                       strokeDasharray="5 5"
                     />
@@ -1453,7 +1692,7 @@ export function SimulatorForm() {
                       type="monotone"
                       dataKey="investment"
                       name="実質投資額"
-                      stroke="#ef4444"
+                      stroke="#f87171"
                       strokeWidth={2}
                       dot={false}
                       strokeDasharray="8 4"
@@ -1479,34 +1718,38 @@ export function SimulatorForm() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
-                className={`${PRICE_SCENARIOS[selectedScenario].bgColor} border-2 ${PRICE_SCENARIOS[selectedScenario].borderColor} rounded-2xl p-5 md:p-8`}
+                className={`${PRICE_SCENARIOS[selectedScenario].bgColor} border-2 ${PRICE_SCENARIOS[selectedScenario].borderColor} rounded-3xl p-6 md:p-8`}
               >
                 <div className="flex items-center gap-3 mb-6">
                   <div 
-                    className="w-5 h-5 rounded-full shadow-lg" 
+                    className="w-6 h-6 rounded-full shadow-md" 
                     style={{ backgroundColor: PRICE_SCENARIOS[selectedScenario].color }}
                   />
-                  <h5 className={`font-black text-lg md:text-2xl ${PRICE_SCENARIOS[selectedScenario].textColor}`}>
+                  <h5 className={`font-black text-xl md:text-2xl ${PRICE_SCENARIOS[selectedScenario].textColor}`}>
                     {PRICE_SCENARIOS[selectedScenario].name}の結果
                   </h5>
                 </div>
                 
                 <div className="grid md:grid-cols-2 gap-4 md:gap-6">
-                  <div className="bg-white rounded-xl p-5 shadow-sm">
-                    <p className="text-xs md:text-sm text-slate-500 mb-2 font-semibold">20年累積削減額</p>
+                  <div className="bg-white rounded-2xl p-6 shadow-sm">
+                    <p className="text-sm text-slate-500 mb-2 font-semibold">20年累積削減額</p>
                     <p 
-                      className="text-3xl md:text-5xl font-black"
+                      className="text-4xl md:text-5xl font-black"
                       style={{ color: PRICE_SCENARIOS[selectedScenario].color }}
                     >
-                      ¥{Math.round((getScenarioData(selectedScenario)?.total20 || 0) / 10000)}万
+                      ¥<AnimatedNumber 
+                        value={Math.round((getScenarioData(selectedScenario)?.total20 || 0) / 10000)} 
+                        suffix="万"
+                        duration={1}
+                      />
                     </p>
                   </div>
                   
-                  <div className="bg-white rounded-xl p-5 shadow-sm">
-                    <p className="text-xs md:text-sm text-slate-500 mb-2 font-semibold">投資回収期間</p>
-                    <p className="text-3xl md:text-5xl font-black mb-3">
+                  <div className="bg-white rounded-2xl p-6 shadow-sm">
+                    <p className="text-sm text-slate-500 mb-2 font-semibold">投資回収期間</p>
+                    <p className="text-4xl md:text-5xl font-black mb-3">
                       {(getScenarioData(selectedScenario)?.payback || 0) < 999 ? (
-                        <span className={(getScenarioData(selectedScenario)?.withinWarranty) ? 'text-emerald-600' : 'text-amber-600'}>
+                        <span className={(getScenarioData(selectedScenario)?.withinWarranty) ? 'text-emerald-600' : 'text-amber-500'}>
                           {getScenarioData(selectedScenario)?.payback}年
                         </span>
                       ) : (
@@ -1515,14 +1758,18 @@ export function SimulatorForm() {
                     </p>
                     {(getScenarioData(selectedScenario)?.payback || 0) < 999 && (
                       (getScenarioData(selectedScenario)?.withinWarranty) ? (
-                        <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                        <motion.div 
+                          initial={{ scale: 0.9 }}
+                          animate={{ scale: 1 }}
+                          className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-xl"
+                        >
                           <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                          <span className="text-xs md:text-sm font-bold text-emerald-700">{WARRANTY_YEARS}年保証内で回収完了！</span>
-                        </div>
+                          <span className="text-sm font-bold text-emerald-700">{WARRANTY_YEARS}年保証内で回収完了！</span>
+                        </motion.div>
                       ) : (
                         <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                          <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-                          <span className="text-xs md:text-sm font-bold text-amber-700">保証期間を超過</span>
+                          <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                          <span className="text-sm font-bold text-amber-600">保証期間を超過</span>
                         </div>
                       )
                     )}
@@ -1532,31 +1779,31 @@ export function SimulatorForm() {
             </AnimatePresence>
 
             {/* 費用内訳 */}
-            <div className="mt-8 bg-slate-50 rounded-2xl p-5 md:p-8">
-              <h4 className="font-black text-slate-900 text-base md:text-xl mb-5">費用内訳（{result.recommendedUnits}台構成）</h4>
+            <div className="mt-8 bg-slate-50 rounded-2xl p-6 md:p-8">
+              <h4 className="font-black text-slate-800 text-lg mb-5">🧾 費用内訳（{result.recommendedUnits}台構成）</h4>
               <div className="space-y-3">
-                <div className="flex justify-between items-center py-2">
+                <div className="flex justify-between items-center py-3 border-b border-slate-200">
                   <span className="text-slate-600 font-medium">製品定価</span>
-                  <span className="font-black text-slate-900 text-lg">¥{result.productPrice.toLocaleString()}</span>
+                  <span className="font-black text-slate-800 text-lg">¥{result.productPrice.toLocaleString()}</span>
                 </div>
-                <div className="flex justify-between items-center py-2">
+                <div className="flex justify-between items-center py-3 border-b border-slate-200">
                   <span className="text-slate-600 font-medium">工事費</span>
-                  <span className="font-black text-slate-900 text-lg">¥{(INSTALLATION_COST_PER_UNIT * result.recommendedUnits * INSTALLATION_DISCOUNTS[result.recommendedUnits]).toLocaleString()}</span>
+                  <span className="font-black text-slate-800 text-lg">¥{(INSTALLATION_COST_PER_UNIT * result.recommendedUnits * INSTALLATION_DISCOUNTS[result.recommendedUnits]).toLocaleString()}</span>
                 </div>
                 {businessType !== 'individual' && (
                   <>
-                    <div className="flex justify-between items-center py-2 border-t border-slate-200">
+                    <div className="flex justify-between items-center py-3 border-b border-slate-200">
                       <span className="text-slate-600 font-medium">税率</span>
                       <span className="font-bold text-slate-700">{result.taxRate}%</span>
                     </div>
-                    <div className="flex justify-between items-center py-2">
+                    <div className="flex justify-between items-center py-3 border-b border-slate-200">
                       <span className="text-slate-600 font-medium">節税効果</span>
                       <span className="font-black text-emerald-600 text-lg">-¥{result.taxSavings.toLocaleString()}</span>
                     </div>
                   </>
                 )}
-                <div className="flex justify-between items-center py-4 border-t-2 border-slate-300">
-                  <span className="text-slate-900 font-black text-lg">実質投資額</span>
+                <div className="flex justify-between items-center py-4 bg-gradient-to-r from-emerald-50 to-cyan-50 rounded-xl px-4 -mx-2">
+                  <span className="text-slate-800 font-black text-lg">実質投資額</span>
                   <span className="font-black text-emerald-600 text-2xl md:text-3xl">¥{result.actualInvestment.toLocaleString()}</span>
                 </div>
               </div>
@@ -1565,32 +1812,38 @@ export function SimulatorForm() {
 
           {/* 電気代上昇のメリット訴求 */}
           <motion.div 
-            {...fadeInUp}
-            className="relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-900 rounded-3xl md:rounded-[2.5rem] p-6 md:p-12"
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="relative overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-emerald-900 rounded-3xl md:rounded-[2.5rem] p-6 md:p-12"
           >
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-emerald-500/20 via-transparent to-transparent" />
             
             <div className="relative z-10">
               <div className="flex flex-col md:flex-row items-start gap-6 md:gap-10">
                 <motion.div 
-                  animate={pulseAnimation}
-                  className="w-16 md:w-24 h-16 md:h-24 bg-gradient-to-br from-emerald-500 to-cyan-500 rounded-3xl flex items-center justify-center shadow-2xl shadow-emerald-500/30 shrink-0"
+                  animate={{ 
+                    scale: [1, 1.05, 1],
+                    rotate: [0, 5, 0]
+                  }}
+                  transition={{ duration: 3, repeat: Infinity }}
+                  className="w-16 md:w-20 h-16 md:h-20 bg-gradient-to-br from-emerald-400 to-cyan-400 rounded-3xl flex items-center justify-center shadow-2xl shadow-emerald-500/30 shrink-0"
                 >
-                  <TrendingUp className="w-8 md:w-12 h-8 md:h-12 text-white" />
+                  <Rocket className="w-8 md:w-10 h-8 md:h-10 text-white" />
                 </motion.div>
                 
                 <div className="flex-1">
-                  <h4 className="text-2xl md:text-4xl font-black text-white mb-4 md:mb-6 leading-tight">
+                  <h4 className="text-2xl md:text-4xl font-black text-white mb-4 leading-tight">
                     💡 電気代高騰時代こそ
                     <span className="bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent"> ENELEAGE</span>
                   </h4>
                   
-                  <p className="text-slate-300 mb-6 md:mb-8 text-sm md:text-lg leading-relaxed">
+                  <p className="text-slate-300 mb-6 text-sm md:text-base leading-relaxed">
                     電気代が上昇するほど、削減効果が拡大。導入が早いほど、長期的な経済メリットが大きくなります。
                   </p>
                   
-                  <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-5 md:p-8 border border-white/10">
-                    <p className="text-white/80 font-bold mb-4 text-sm md:text-base">【標準シナリオ（年3%上昇）の削減額推移】</p>
+                  <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-5 md:p-6 border border-white/10">
+                    <p className="text-white/80 font-bold mb-4 text-sm">【標準シナリオ（年3%上昇）の削減額推移】</p>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {[
                         { year: '1年後', amount: result.avgMonthlySavings, growth: null },
@@ -1601,12 +1854,13 @@ export function SimulatorForm() {
                         <motion.div
                           key={i}
                           initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
+                          whileInView={{ opacity: 1, y: 0 }}
+                          viewport={{ once: true }}
                           transition={{ delay: 0.1 * i }}
                           className="bg-white/10 rounded-xl p-4 text-center"
                         >
                           <p className="text-white/60 text-xs mb-1">{item.year}</p>
-                          <p className="text-white font-black text-lg md:text-xl">
+                          <p className="text-white font-black text-lg">
                             ¥{item.amount.toLocaleString()}
                           </p>
                           {item.growth && (
@@ -1623,20 +1877,22 @@ export function SimulatorForm() {
 
           {/* 補助金案内 */}
           <motion.div 
-            {...fadeInUp}
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
             className="bg-gradient-to-br from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-3xl p-6 md:p-10"
           >
             <div className="flex flex-col md:flex-row items-start gap-5 md:gap-8">
-              <div className="w-14 md:w-18 h-14 md:h-18 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/25 shrink-0">
-                <Shield className="w-7 md:w-9 h-7 md:h-9 text-white" />
+              <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-200 shrink-0">
+                <Shield className="w-7 h-7 text-white" />
               </div>
               <div>
-                <h4 className="font-black text-slate-900 text-xl md:text-2xl mb-3">自治体補助金でさらにお得に</h4>
+                <h4 className="font-black text-slate-800 text-xl md:text-2xl mb-3">🎁 自治体補助金でさらにお得に</h4>
                 <p className="text-slate-600 leading-relaxed text-sm md:text-base">
                   各自治体の蓄電池導入補助金を活用することで、初期投資をさらに削減可能です。
                   補助金額は数十万円〜100万円以上になる場合もあり、投資回収期間の大幅短縮が期待できます。
                 </p>
-                <p className="text-slate-500 text-xs mt-3">
+                <p className="text-slate-400 text-xs mt-3">
                   ※ 補助金の詳細はお住まいの自治体にお問い合わせください
                 </p>
               </div>
@@ -1645,66 +1901,73 @@ export function SimulatorForm() {
 
           {/* 代理店募集 */}
           <motion.div 
-            {...fadeInUp} 
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
             id="agency" 
-            className="bg-white rounded-3xl md:rounded-[2.5rem] border border-slate-200 p-6 md:p-14 shadow-xl"
+            className="bg-white rounded-3xl md:rounded-[2.5rem] shadow-xl shadow-slate-100 border border-slate-100 p-6 md:p-14"
           >
-            <div className="text-center mb-10 md:mb-16">
+            <div className="text-center mb-10 md:mb-14">
               <motion.div 
                 initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border border-emerald-500/30 rounded-full px-5 py-2.5 mb-5"
+                whileInView={{ scale: 1 }}
+                viewport={{ once: true }}
+                className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-50 to-cyan-50 border border-emerald-200 rounded-full px-5 py-2.5 mb-5"
               >
-                <Users className="w-4 h-4 text-emerald-600" />
-                <span className="text-xs md:text-sm font-bold text-emerald-600">販売代理店募集</span>
+                <Users className="w-4 h-4 text-emerald-500" />
+                <span className="text-sm font-bold text-emerald-600">販売代理店募集</span>
               </motion.div>
               
-              <h3 className="text-2xl md:text-5xl font-black text-slate-900 mb-4 leading-tight">
+              <h3 className="text-2xl md:text-4xl font-black text-slate-800 mb-4 leading-tight">
                 一緒に日本の電気代削減を推進しませんか
               </h3>
-              <p className="text-sm md:text-lg text-slate-500 max-w-2xl mx-auto">
+              <p className="text-sm md:text-base text-slate-500 max-w-2xl mx-auto">
                 ENELEAGE Zeroの販売代理店を募集しています。充実したサポート体制であなたのビジネスを支援します。
               </p>
             </div>
 
-            <div className="grid md:grid-cols-3 gap-4 md:gap-6 mb-10 md:mb-14">
+            <div className="grid md:grid-cols-3 gap-4 md:gap-6 mb-10 md:mb-12">
               {[
-                { num: '1', title: '高収益モデル', desc: '魅力的なマージン設定で安定した収益を実現' },
-                { num: '2', title: '充実サポート', desc: '営業ツール・研修・技術サポート完備' },
-                { num: '3', title: '成長市場', desc: '電力自由化で拡大する蓄電池市場' }
+                { num: '1', title: '高収益モデル', desc: '魅力的なマージン設定で安定した収益を実現', emoji: '💰' },
+                { num: '2', title: '充実サポート', desc: '営業ツール・研修・技術サポート完備', emoji: '🤝' },
+                { num: '3', title: '成長市場', desc: '電力自由化で拡大する蓄電池市場', emoji: '📈' }
               ].map((item, i) => (
                 <motion.div 
                   key={i}
                   initial={{ opacity: 0, y: 30 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
                   transition={{ delay: i * 0.1 }}
-                  whileHover={{ y: -8, scale: 1.02 }}
-                  className="text-center p-6 md:p-10 bg-slate-50 rounded-2xl md:rounded-3xl border border-slate-200 hover:border-emerald-300 hover:shadow-xl transition-all"
+                  whileHover={{ y: -8 }}
+                  className="text-center p-6 md:p-8 bg-slate-50 rounded-3xl border-2 border-slate-200 hover:border-emerald-200 hover:shadow-xl transition-all"
                 >
-                  <div className="w-14 md:w-20 h-14 md:h-20 bg-gradient-to-br from-emerald-500 to-cyan-500 rounded-2xl md:rounded-3xl flex items-center justify-center mx-auto mb-5 md:mb-8 shadow-xl shadow-emerald-500/25">
-                    <span className="text-2xl md:text-4xl font-black text-white">{item.num}</span>
-                  </div>
-                  <h4 className="font-black text-slate-900 text-lg md:text-xl mb-3">{item.title}</h4>
+                  <div className="text-4xl mb-4">{item.emoji}</div>
+                  <h4 className="font-black text-slate-800 text-lg mb-2">{item.title}</h4>
                   <p className="text-sm text-slate-500">{item.desc}</p>
                 </motion.div>
               ))}
             </div>
 
             <div className="text-center">
-              <Button
-                size="lg"
-                className="bg-gradient-to-r from-emerald-500 via-cyan-500 to-emerald-500 bg-[length:200%_100%] hover:bg-[position:100%_0] text-white h-14 md:h-18 px-10 md:px-14 text-base md:text-xl font-black rounded-2xl shadow-2xl shadow-emerald-500/25 transition-all duration-500"
-                asChild
+              <motion.div
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.98 }}
               >
-                <a
-                  href="https://docs.google.com/forms/d/e/1FAIpQLSdVRVxurB8AOO9KT1-Mv5kmM3A_VawLS-gB6mfW2Ia4LO-DuQ/viewform?usp=header"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <Button
+                  size="lg"
+                  className="bg-gradient-to-r from-emerald-500 via-cyan-500 to-emerald-500 bg-[length:200%_100%] hover:bg-[position:100%_0] text-white h-14 md:h-16 px-10 md:px-14 text-base md:text-lg font-black rounded-2xl shadow-2xl shadow-emerald-200 transition-all duration-500"
+                  asChild
                 >
-                  代理店応募フォームへ
-                  <ArrowRight className="ml-2 w-5 h-5" />
-                </a>
-              </Button>
+                  <a
+                    href="https://docs.google.com/forms/d/e/1FAIpQLSdVRVxurB8AOO9KT1-Mv5kmM3A_VawLS-gB6mfW2Ia4LO-DuQ/viewform?usp=header"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    代理店応募フォームへ
+                    <ArrowRight className="ml-2 w-5 h-5" />
+                  </a>
+                </Button>
+              </motion.div>
             </div>
           </motion.div>
         </motion.div>
