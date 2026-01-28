@@ -90,6 +90,7 @@ interface MultiUnitAnalysis {
   taxSavings: number
   actualInvestment: number
   annualReduction: number
+  coverageRate: number
   paybackStandard: number
   roi15Years: number
 }
@@ -102,7 +103,7 @@ interface SimulationResult {
   annualSavings: number
   monthlyData: MonthlyData[]
   longTermData: LongTermData[]
-  recommendedUnits: 1
+  recommendedUnits: 1 | 2 | 3 | 4
   multiUnitAnalyses: MultiUnitAnalysis[]
   productPrice: number
   taxRate: number
@@ -283,7 +284,14 @@ export function SimulatorForm() {
 
       const taxRate = getTaxRate()
 
-      //  1台で削減率達成（台数比較）
+      // 使用量推定
+      const VARIABLE_COST_RATIO = 0.75
+      const variableCost = baselineCost * VARIABLE_COST_RATIO
+      const estimatedDailyUsage = variableCost / overallAvgPrice / 30
+      const HIGH_TIME_RATIO = 0.7
+      const highTimeUsage = estimatedDailyUsage * HIGH_TIME_RATIO
+
+      // 台数別分析（カバー率ベース）
       const multiUnitAnalyses: MultiUnitAnalysis[] = []
 
       for (let units = 1; units <= 4; units++) {
@@ -305,8 +313,15 @@ export function SimulatorForm() {
 
         const actualInvestment = totalInvestment - taxSavings
 
-        // 1台で削減率達成、複数台は不要
-        const unitAnnualSavings = annualSavings
+        // カバー率計算
+        const unitCapacity = BATTERY_SPEC.dailyCapacity * units
+        const coverageRate = Math.min(unitCapacity / highTimeUsage, 1.0)
+
+        // 実効削減率 = CSV削減率 × カバー率
+        const maxReductionRate = selectedAreaData.reductionRate / 100
+        const effectiveReductionRate = maxReductionRate * coverageRate
+        const unitAnnualSavings = Math.round(totalCurrentCost * effectiveReductionRate)
+        
         const payback15 = unitAnnualSavings > 0 ? actualInvestment / unitAnnualSavings : 999
         const total15Years = unitAnnualSavings * 15
         const netProfit15Years = total15Years - actualInvestment
@@ -320,25 +335,31 @@ export function SimulatorForm() {
           taxSavings,
           actualInvestment,
           annualReduction: unitAnnualSavings,
+          coverageRate,
           paybackStandard: payback15,
           roi15Years,
         })
       }
 
-      const recommendedUnits: 1 = 1
-      const recommendedAnalysis = multiUnitAnalyses[0]
+      // 推奨台数: ROI最大
+      const recommendedAnalysis = multiUnitAnalyses.reduce((best, current) =>
+        current.roi15Years > best.roi15Years ? current : best
+      )
+      const recommendedUnits = recommendedAnalysis.units as 1 | 2 | 3 | 4
 
       const longTermData: LongTermData[] = []
       const maxYears = 25
+      
+      const recommendedAnnualCost = totalCurrentCost - recommendedAnalysis.annualReduction
 
       for (let year = 0; year <= maxYears; year++) {
         const costNoChange = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
         const costStandard = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
         const costWorst = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
         
-        const costReducedNoChange = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
-        const costReducedStandard = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
-        const costReducedWorst = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
+        const costReducedNoChange = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
+        const costReducedStandard = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
+        const costReducedWorst = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
 
         longTermData.push({
           year,
@@ -364,9 +385,9 @@ export function SimulatorForm() {
         const yearCostStandard = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
         const yearCostWorst = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
         
-        const yearCostReducedNoChange = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
-        const yearCostReducedStandard = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
-        const yearCostReducedWorst = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
+        const yearCostReducedNoChange = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
+        const yearCostReducedStandard = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
+        const yearCostReducedWorst = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
 
         cumulativeNoChange += yearCostNoChange
         cumulativeStandard += yearCostStandard
@@ -410,8 +431,8 @@ export function SimulatorForm() {
         area: selectedAreaData.area,
         baselineMonthlyCost: baselineCost,
         reductionRate: selectedAreaData.reductionRate,
-        avgMonthlySavings,
-        annualSavings,
+        avgMonthlySavings: Math.round(recommendedAnalysis.annualReduction / 12),
+        annualSavings: recommendedAnalysis.annualReduction,
         monthlyData,
         longTermData,
         recommendedUnits,
@@ -950,6 +971,10 @@ export function SimulatorForm() {
                       投資額: ¥{(analysis.totalInvestment / 10000).toFixed(0)}万
                     </p>
                     <div className="space-y-2 text-left text-xs">
+                      <div className={analysis.units === result.recommendedUnits ? 'text-white/90' : 'text-gray-600'}>
+                        <span className="font-semibold">カバー率:</span>
+                        <span className="float-right font-bold">{(analysis.coverageRate * 100).toFixed(0)}%</span>
+                      </div>
                       <div className={analysis.units === result.recommendedUnits ? 'text-white/90' : 'text-gray-600'}>
                         <span className="font-semibold">年間削減:</span>
                         <span className="float-right font-bold">¥{(analysis.annualReduction / 10000).toFixed(0)}万</span>
