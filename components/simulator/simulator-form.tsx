@@ -2,15 +2,35 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Calculator, TrendingDown, Calendar, DollarSign, Mail, FileText, Users, CheckCircle2, AlertCircle, TrendingUp, Info, Zap, Shield, Sparkles } from 'lucide-react'
+import { Calculator, TrendingDown, Calendar, DollarSign, Mail, FileText, Users, CheckCircle2, AlertCircle, TrendingUp, Info, Zap, Shield, Sparkles, ChevronDown, ChevronUp, Battery } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Legend, Tooltip, Line, LineChart, ReferenceLine } from 'recharts'
 import { motion, AnimatePresence } from 'framer-motion'
 
 const AREA_REDUCTION_CSV_URL = 'https://docs.google.com/spreadsheets/d/1CutW05rwWNn2IDKPa7QK9q5m_A59lu1lwO1hJ-4GCHU/export?format=csv&gid=184100076'
 const POWER_PRICE_CSV_URL = 'https://docs.google.com/spreadsheets/d/1tPQZyeBHEE2Fh2nY5MBBMjUIF30YQTYxi3n2o36Ikyo/export?format=csv&gid=0'
 
-const PRODUCT_PRICE = 3500000
+// 製品価格設定
+const PRODUCT_PRICE_PER_UNIT = 3500000
+const INSTALLATION_COST_PER_UNIT = 200000
 const WARRANTY_YEARS = 15
+const DEPRECIATION_YEARS = 6
+
+// 台数による工事費割引
+const INSTALLATION_DISCOUNTS = {
+  1: 1.0,
+  2: 0.9,   // 10%割引
+  3: 0.85,  // 15%割引
+  4: 0.8    // 20%割引
+}
+
+// 蓄電池仕様
+const BATTERY_SPEC = {
+  capacity: 10.294,  // kWh（使用可能容量）
+  cyclesPerDay: 4,   // 1日のサイクル数
+  get dailyCapacity() {
+    return this.capacity * this.cyclesPerDay // 41.176kWh/日
+  }
+}
 
 const TAX_RATES = {
   individual: 0,
@@ -35,6 +55,7 @@ const PRICE_SCENARIOS = {
 }
 
 type ScenarioKey = keyof typeof PRICE_SCENARIOS
+type TaxIncentivePattern = 'immediate' | 'tax_credit' | 'depreciation'
 
 interface AreaData {
   area: string
@@ -66,6 +87,31 @@ interface PaybackData {
   cumulativeSavingsWorst: number
 }
 
+interface MultiUnitAnalysis {
+  units: 1 | 2 | 3 | 4
+  productPrice: number
+  installationCost: number
+  totalInvestment: number
+  taxSavings: number
+  actualInvestment: number
+  monthlyReduction: number
+  annualReduction: number
+  paybackStandard: number
+  total15Years: number
+  netProfit15Years: number
+  roi15Years: number
+}
+
+interface TaxPatternComparison {
+  pattern: TaxIncentivePattern
+  patternName: string
+  taxSavings: number
+  actualInvestment: number
+  paybackYears: number
+  netProfit15Years: number
+  notes: string[]
+}
+
 interface SimulationResult {
   area: string
   baselineMonthlyCost: number
@@ -74,6 +120,10 @@ interface SimulationResult {
   annualSavings: number
   monthlyData: MonthlyData[]
   longTermData: LongTermData[]
+  recommendedUnits: 1 | 2 | 3 | 4
+  multiUnitAnalyses: MultiUnitAnalysis[]
+  taxPattern: TaxIncentivePattern
+  taxPatternComparisons: TaxPatternComparison[]
   productPrice: number
   taxRate: number
   taxSavings: number
@@ -106,10 +156,14 @@ export function SimulatorForm() {
   const [monthlyCost, setMonthlyCost] = useState<string>('')
   const [businessType, setBusinessType] = useState<'individual' | 'soloProprietor' | 'corporate'>('corporate')
   const [taxCondition, setTaxCondition] = useState<string>('corporateSmall800')
+  const [taxPattern, setTaxPattern] = useState<TaxIncentivePattern>('immediate')
+  const [taxCreditRate, setTaxCreditRate] = useState<0.07 | 0.10>(0.10)
   const [result, setResult] = useState<SimulationResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedScenario, setSelectedScenario] = useState<ScenarioKey>('standard')
+  const [showMultiUnitComparison, setShowMultiUnitComparison] = useState(false)
+  const [showTaxComparison, setShowTaxComparison] = useState(false)
 
   const parseCSV = (csvText: string): string[][] => {
     const lines = csvText.trim().split('\n')
@@ -149,6 +203,12 @@ export function SimulatorForm() {
       if (taxCondition === 'corporateLarge') return '大法人 税率23.2%'
     }
     return ''
+  }
+
+  const getTaxPatternName = (): string => {
+    if (taxPattern === 'immediate') return '即時償却'
+    if (taxPattern === 'tax_credit') return `税額控除（${taxCreditRate * 100}%）`
+    return '通常減価償却'
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -232,8 +292,10 @@ export function SimulatorForm() {
         const monthAvgPrice = monthlyAvgPrices[month] || overallAvgPrice
         const variationRate = monthAvgPrice / overallAvgPrice
         
-        const currentMonthCost = baselineCost
-        const reducedMonthCost = Math.round(baselineCost * variationRate * (1 - selectedAreaData.reductionRate / 100))
+        // 月の電気代は価格変動を反映
+        const currentMonthCost = Math.round(baselineCost * variationRate)
+        // 削減率は一定（CSVの値）、削減額は電気代に比例
+        const reducedMonthCost = Math.round(currentMonthCost * (1 - selectedAreaData.reductionRate / 100))
         
         monthlyData.push({
           month: monthNames[month - 1],
@@ -248,17 +310,95 @@ export function SimulatorForm() {
       const annualSavings = totalCurrentCost - totalReducedCost
       const avgMonthlySavings = Math.round(annualSavings / 12)
 
+      // 使用量推定
+      const VARIABLE_COST_RATIO = 0.75
+      const variableCost = baselineCost * VARIABLE_COST_RATIO
+      const estimatedDailyUsage = variableCost / overallAvgPrice / 30
+      const HIGH_TIME_RATIO = 0.7
+      const highTimeUsage = estimatedDailyUsage * HIGH_TIME_RATIO
+
+      // 税率取得
+      const taxRate = getTaxRate()
+
+      // ========================================
+      // 複数台分析（1-4台）
+      // ========================================
+      const multiUnitAnalyses: MultiUnitAnalysis[] = []
+
+      for (let units = 1; units <= 4; units++) {
+        const productPrice = PRODUCT_PRICE_PER_UNIT * units
+        const installationCost = INSTALLATION_COST_PER_UNIT * units * INSTALLATION_DISCOUNTS[units as 1|2|3|4]
+        const totalInvestment = productPrice + installationCost
+
+        // 税制優遇計算
+        let taxSavings = 0
+        if (businessType !== 'individual') {
+          if (taxPattern === 'immediate') {
+            taxSavings = productPrice * taxRate
+          } else if (taxPattern === 'tax_credit') {
+            taxSavings = productPrice * taxCreditRate
+          } else {
+            const yearlyTaxSavings = (productPrice / DEPRECIATION_YEARS) * taxRate
+            taxSavings = yearlyTaxSavings * DEPRECIATION_YEARS * 0.7
+          }
+        }
+
+        const actualInvestment = totalInvestment - taxSavings
+
+        // カバー率計算
+        const unitTotalCapacity = BATTERY_SPEC.dailyCapacity * units
+        const unitCoverageRate = Math.min(unitTotalCapacity / highTimeUsage, 1.0)
+
+        // 実効削減率 = CSV削減率 × カバー率
+        const unitEffectiveRate = (selectedAreaData.reductionRate / 100) * unitCoverageRate
+        const unitAnnualSavings = Math.round(totalCurrentCost * unitEffectiveRate)
+        const unitMonthlyReduction = Math.round(unitAnnualSavings / 12)
+
+        // 15年分析
+        const payback15 = unitAnnualSavings > 0 ? actualInvestment / unitAnnualSavings : 999
+        const total15Years = unitAnnualSavings * 15
+        const netProfit15Years = total15Years - actualInvestment
+        const roi15Years = actualInvestment > 0 ? (netProfit15Years / actualInvestment) * 100 : 0
+
+        multiUnitAnalyses.push({
+          units: units as 1 | 2 | 3 | 4,
+          productPrice,
+          installationCost,
+          totalInvestment,
+          taxSavings,
+          actualInvestment,
+          monthlyReduction: unitMonthlyReduction,
+          annualReduction: unitAnnualSavings,
+          paybackStandard: payback15,
+          total15Years,
+          netProfit15Years,
+          roi15Years,
+        })
+      }
+
+      // 推奨台数決定
+      const recommendedAnalysis = multiUnitAnalyses.reduce((best, current) =>
+        current.roi15Years > best.roi15Years ? current : best
+      )
+      const recommendedUnits = recommendedAnalysis.units
+
+      // 税制パターン比較
+      const taxPatternComparisons: TaxPatternComparison[] = []
+
+
       const longTermData: LongTermData[] = []
       const maxYears = 25
+      
+      const recommendedAnnualCost = totalCurrentCost - recommendedAnalysis.annualReduction
 
       for (let year = 0; year <= maxYears; year++) {
-        const costNoChange = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
-        const costStandard = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
-        const costWorst = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
+        const costNoChange = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
+        const costStandard = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
+        const costWorst = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
         
-        const costReducedNoChange = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
-        const costReducedStandard = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
-        const costReducedWorst = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
+        const costReducedNoChange = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
+        const costReducedStandard = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
+        const costReducedWorst = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
 
         longTermData.push({
           year,
@@ -271,10 +411,6 @@ export function SimulatorForm() {
         })
       }
 
-      const taxRate = getTaxRate()
-      const taxSavings = Math.round(PRODUCT_PRICE * taxRate)
-      const actualInvestment = PRODUCT_PRICE - taxSavings
-
       const paybackData: PaybackData[] = []
       let cumulativeNoChange = 0
       let cumulativeStandard = 0
@@ -284,13 +420,13 @@ export function SimulatorForm() {
       let cumulativeReducedWorst = 0
 
       for (let year = 0; year <= maxYears; year++) {
-        const yearCostNoChange = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
-        const yearCostStandard = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
-        const yearCostWorst = baselineCost * 12 * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
+        const yearCostNoChange = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
+        const yearCostStandard = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
+        const yearCostWorst = totalCurrentCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
         
-        const yearCostReducedNoChange = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
-        const yearCostReducedStandard = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
-        const yearCostReducedWorst = totalReducedCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
+        const yearCostReducedNoChange = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.noChange.rate, year)
+        const yearCostReducedStandard = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.standard.rate, year)
+        const yearCostReducedWorst = recommendedAnnualCost * Math.pow(1 + PRICE_SCENARIOS.worst.rate, year)
 
         cumulativeNoChange += yearCostNoChange
         cumulativeStandard += yearCostStandard
@@ -301,7 +437,7 @@ export function SimulatorForm() {
 
         paybackData.push({
           year,
-          investment: actualInvestment,
+          investment: recommendedAnalysis.actualInvestment,
           cumulativeSavingsNoChange: Math.round(cumulativeNoChange - cumulativeReducedNoChange),
           cumulativeSavingsStandard: Math.round(cumulativeStandard - cumulativeReducedStandard),
           cumulativeSavingsWorst: Math.round(cumulativeWorst - cumulativeReducedWorst),
@@ -310,11 +446,11 @@ export function SimulatorForm() {
 
       const findPaybackYear = (cumulativeSavingsKey: 'cumulativeSavingsNoChange' | 'cumulativeSavingsStandard' | 'cumulativeSavingsWorst'): number => {
         for (let i = 0; i < paybackData.length; i++) {
-          if (paybackData[i][cumulativeSavingsKey] >= actualInvestment) {
+          if (paybackData[i][cumulativeSavingsKey] >= recommendedAnalysis.actualInvestment) {
             if (i === 0) return 0
             const prevSavings = paybackData[i - 1][cumulativeSavingsKey]
             const currSavings = paybackData[i][cumulativeSavingsKey]
-            const fraction = (actualInvestment - prevSavings) / (currSavings - prevSavings)
+            const fraction = (recommendedAnalysis.actualInvestment - prevSavings) / (currSavings - prevSavings)
             return parseFloat((i - 1 + fraction).toFixed(1))
           }
         }
@@ -334,14 +470,18 @@ export function SimulatorForm() {
         area: selectedAreaData.area,
         baselineMonthlyCost: baselineCost,
         reductionRate: selectedAreaData.reductionRate,
-        avgMonthlySavings,
-        annualSavings,
+        avgMonthlySavings: recommendedAnalysis.monthlyReduction,
+        annualSavings: recommendedAnalysis.annualReduction,
         monthlyData,
         longTermData,
-        productPrice: PRODUCT_PRICE,
+        recommendedUnits,
+        multiUnitAnalyses,
+        taxPattern,
+        taxPatternComparisons,
+        productPrice: recommendedAnalysis.productPrice,
         taxRate: taxRate * 100,
-        taxSavings,
-        actualInvestment,
+        taxSavings: recommendedAnalysis.taxSavings,
+        actualInvestment: recommendedAnalysis.actualInvestment,
         paybackNoChange,
         paybackStandard,
         paybackWorst,
@@ -748,6 +888,161 @@ export function SimulatorForm() {
                   </a>
                 </Button>
               </div>
+            </div>
+          </motion.div>
+
+          {/* 🔋 推奨台数セクション */}
+          <motion.div {...fadeInUp} className="bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 rounded-2xl md:rounded-3xl p-6 md:p-12 shadow-2xl border-2 border-primary/30 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-96 h-96 bg-primary/5 rounded-full blur-3xl -mr-48 -mt-48" />
+            
+            <div className="relative z-10">
+              <div className="text-center mb-8 md:mb-12">
+                <div className="inline-flex items-center gap-2 bg-gradient-to-r from-primary to-emerald-600 text-white rounded-full px-6 py-3 mb-4 shadow-lg shadow-primary/30">
+                  <Sparkles className="w-5 h-5" />
+                  <span className="text-sm font-black">最適台数診断</span>
+                </div>
+                <h3 className="text-3xl md:text-5xl font-black text-gray-900 mb-4">
+                  推奨台数: <span className="text-primary">{result.recommendedUnits}台</span>
+                </h3>
+                <p className="text-base md:text-xl text-gray-600">
+                  ROI {result.multiUnitAnalyses.find(a => a.units === result.recommendedUnits)?.roi15Years.toFixed(0)}% で最も効率的です
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-4 gap-4 mb-8">
+                {result.multiUnitAnalyses.map((analysis) => (
+                  <motion.div
+                    key={analysis.units}
+                    whileHover={{ scale: 1.05, y: -8 }}
+                    className={`rounded-2xl p-6 border-2 transition-all ${
+                      analysis.units === result.recommendedUnits
+                        ? 'bg-gradient-to-br from-primary to-emerald-600 text-white border-primary shadow-2xl shadow-primary/40'
+                        : 'bg-white border-gray-200 hover:border-primary/50 hover:shadow-xl'
+                    }`}
+                  >
+                    {analysis.units === result.recommendedUnits && (
+                      <div className="flex items-center gap-1 mb-3">
+                        <CheckCircle2 className="w-5 h-5" />
+                        <span className="text-xs font-black">推奨</span>
+                      </div>
+                    )}
+                    <div className="text-center">
+                      <p className={`text-4xl font-black mb-2 ${analysis.units === result.recommendedUnits ? 'text-white' : 'text-primary'}`}>
+                        {analysis.units}台
+                      </p>
+                      <p className={`text-xs mb-4 ${analysis.units === result.recommendedUnits ? 'text-white/80' : 'text-gray-500'}`}>
+                        ¥{(analysis.totalInvestment / 10000).toFixed(0)}万円
+                      </p>
+                      
+                      <div className="space-y-2 text-left">
+                        <div className={`text-xs ${analysis.units === result.recommendedUnits ? 'text-white/90' : 'text-gray-600'}`}>
+                          <span className="font-semibold">月間削減:</span>
+                          <span className="float-right font-bold">¥{(analysis.monthlyReduction / 1000).toFixed(0)}k</span>
+                        </div>
+                        <div className={`text-xs ${analysis.units === result.recommendedUnits ? 'text-white/90' : 'text-gray-600'}`}>
+                          <span className="font-semibold">15年ROI:</span>
+                          <span className="float-right font-bold">{analysis.roi15Years.toFixed(0)}%</span>
+                        </div>
+                        <div className={`text-xs ${analysis.units === result.recommendedUnits ? 'text-white/90' : 'text-gray-600'}`}>
+                          <span className="font-semibold">回収:</span>
+                          <span className="float-right font-bold">{analysis.paybackStandard.toFixed(1)}年</span>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+
+              <motion.button
+                onClick={() => setShowMultiUnitComparison(!showMultiUnitComparison)}
+                className="w-full flex items-center justify-center gap-2 text-primary font-bold text-sm hover:text-primary/80 transition-colors"
+              >
+                <span>{showMultiUnitComparison ? '詳細を閉じる' : '詳細比較を見る'}</span>
+                {showMultiUnitComparison ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </motion.button>
+
+              <AnimatePresence>
+                {showMultiUnitComparison && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="mt-6 overflow-hidden"
+                  >
+                    <div className="bg-white rounded-xl p-6 border border-gray-200">
+                      <h4 className="font-black text-lg mb-4">台数別詳細比較</h4>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b-2 border-gray-200">
+                              <th className="text-left py-3 px-2 font-bold">項目</th>
+                              {result.multiUnitAnalyses.map(a => (
+                                <th key={a.units} className={`text-right py-3 px-2 ${a.units === result.recommendedUnits ? 'text-primary font-black' : 'font-semibold'}`}>
+                                  {a.units}台
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="border-b border-gray-100">
+                              <td className="py-3 px-2 text-gray-600">製品価格</td>
+                              {result.multiUnitAnalyses.map(a => (
+                                <td key={a.units} className="text-right py-3 px-2 font-semibold">¥{(a.productPrice / 10000).toFixed(0)}万</td>
+                              ))}
+                            </tr>
+                            <tr className="border-b border-gray-100">
+                              <td className="py-3 px-2 text-gray-600">工事費</td>
+                              {result.multiUnitAnalyses.map(a => (
+                                <td key={a.units} className="text-right py-3 px-2 font-semibold">¥{(a.installationCost / 10000).toFixed(0)}万</td>
+                              ))}
+                            </tr>
+                            <tr className="border-b border-gray-100 bg-green-50">
+                              <td className="py-3 px-2 text-gray-600">節税額</td>
+                              {result.multiUnitAnalyses.map(a => (
+                                <td key={a.units} className="text-right py-3 px-2 font-bold text-green-600">-¥{(a.taxSavings / 10000).toFixed(0)}万</td>
+                              ))}
+                            </tr>
+                            <tr className="border-b-2 border-gray-200">
+                              <td className="py-3 px-2 font-bold">実質投資額</td>
+                              {result.multiUnitAnalyses.map(a => (
+                                <td key={a.units} className="text-right py-3 px-2 font-bold">¥{(a.actualInvestment / 10000).toFixed(0)}万</td>
+                              ))}
+                            </tr>
+                            <tr className="border-b border-gray-100 bg-blue-50">
+                              <td className="py-3 px-2 font-bold">年間削減額</td>
+                              {result.multiUnitAnalyses.map(a => (
+                                <td key={a.units} className="text-right py-3 px-2 font-bold text-blue-600">¥{(a.annualReduction / 10000).toFixed(1)}万</td>
+                              ))}
+                            </tr>
+                            <tr className="border-b border-gray-100">
+                              <td className="py-3 px-2 text-gray-600">15年累計</td>
+                              {result.multiUnitAnalyses.map(a => (
+                                <td key={a.units} className="text-right py-3 px-2 font-semibold">¥{(a.total15Years / 10000).toFixed(0)}万</td>
+                              ))}
+                            </tr>
+                            <tr className="border-b-2 border-gray-200">
+                              <td className="py-3 px-2 font-bold">15年純利益</td>
+                              {result.multiUnitAnalyses.map(a => (
+                                <td key={a.units} className={`text-right py-3 px-2 font-bold ${a.netProfit15Years > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  ¥{(a.netProfit15Years / 10000).toFixed(0)}万
+                                </td>
+                              ))}
+                            </tr>
+                            <tr>
+                              <td className="py-3 px-2 font-bold">ROI</td>
+                              {result.multiUnitAnalyses.map(a => (
+                                <td key={a.units} className={`text-right py-3 px-2 font-black text-lg ${a.units === result.recommendedUnits ? 'text-primary' : 'text-gray-700'}`}>
+                                  {a.roi15Years.toFixed(0)}%
+                                </td>
+                              ))}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
 
