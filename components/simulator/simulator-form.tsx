@@ -284,10 +284,11 @@ export function SimulatorForm() {
 
       const taxRate = getTaxRate()
 
-      // 使用量推定
+      // 使用量推定（小売単価ベース）
       const VARIABLE_COST_RATIO = 0.75
+      const RETAIL_PRICE_PER_KWH = 30 // 小売単価（円/kWh）
       const variableCost = baselineCost * VARIABLE_COST_RATIO
-      const estimatedDailyUsage = variableCost / overallAvgPrice / 30
+      const estimatedDailyUsage = variableCost / RETAIL_PRICE_PER_KWH / 30
       const HIGH_TIME_RATIO = 0.7
       const highTimeUsage = estimatedDailyUsage * HIGH_TIME_RATIO
 
